@@ -22,7 +22,18 @@ namespace AAEmu.Game.Core.Packets.G2C
 
             foreach(var item in _items)
             {
-                item.Write(stream);
+                stream.Write(item.TemplateId);
+                stream.Write(item.Id);
+                stream.Write(item.Grade);
+                stream.Write((byte)0);
+                stream.Write(item.Count);
+                stream.Write(item.DetailType);
+                stream.Write(item.CreateTime);
+                stream.Write(item.LifespanMins);
+                stream.Write(item.MadeUnitId);
+                stream.Write(item.WorldId);
+                stream.Write(item.UnsecureTime);
+                stream.Write(item.UnpackTime);
             }
 
             stream.Write(_lootAll);
