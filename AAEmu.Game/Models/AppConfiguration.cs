@@ -1,4 +1,4 @@
-using AAEmu.Commons.Utils;
+﻿using AAEmu.Commons.Utils;
 
 namespace AAEmu.Game.Models
 {
@@ -18,6 +18,7 @@ namespace AAEmu.Game.Models
         {
             public string Host { get; set; }
             public ushort Port { get; set; }
+            public int PlayerNumber { get; set; }
         }
 
         public class DBConnections
