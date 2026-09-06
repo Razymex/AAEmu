@@ -28,4 +28,7 @@ public static class MailDeliveryRules
 
     public static bool CanPersistAttachment(Item item) =>
         item is { SlotType: SlotType.Mail, OwnerId: > 0 };
+
+    public static bool IsPublished(BaseMail mail) =>
+        mail is { IsPendingPublish: false };
 }

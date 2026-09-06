@@ -27,6 +27,12 @@ public class BaseMail
     public bool IsDelivered { get; set; }
     public bool IsDirty { get => _isDirty; set => _isDirty = value; }
 
+    /// <summary>
+    /// Staged on a caller transaction that has not committed. Mailbox list, claim, and
+    /// the world save must ignore it until <see cref="MailManager.PublishDelivered"/>.
+    /// </summary>
+    public bool IsPendingPublish { get; set; }
+
     public BaseMail()
     {
         Header = new MailHeader(this);

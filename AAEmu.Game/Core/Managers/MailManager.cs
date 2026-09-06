@@ -24,6 +24,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public Dictionary<long, BaseMail> _allPlayerMails = [];
     public Dictionary<long, BaseMail> AllPlayerMails => _allPlayerMails;
+    private readonly Dictionary<long, BaseMail> _pendingMails = [];
     private List<long> _deletedMailIds = [];
     // Unused: private object _lock = new();
 
@@ -37,10 +38,9 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public BaseMail GetMailById(long id)
     {
-        if (_allPlayerMails.TryGetValue(id, out var theMail))
+        if (_allPlayerMails.TryGetValue(id, out var theMail) && MailDeliveryRules.IsPublished(theMail))
             return theMail;
-        else
-            return null;
+        return null;
     }
 
     public uint GetNewMailId()
@@ -74,14 +74,15 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         if (mail == null || connection == null || transaction == null)
             return false;
 
-        MailDeliveryRules.PrepareAttachments(mail);
-        if (!TryEnqueue(mail, out _))
+        if (!TryStageDelivery(mail, out _))
             return false;
 
         try
         {
-            // Only this letter (and its attachments). The manager-wide Save would mark
-            // unrelated dirty mail / deletions clean before the caller commits.
+            // Prepare and write only after staging so a concurrent world save still
+            // skips unowned None-slot items. Do not publish: mailbox/claim/save must
+            // not see this letter until the caller commits and PublishDelivered runs.
+            MailDeliveryRules.PrepareAttachments(mail);
             WriteMail(mail, connection, transaction);
             PersistMailAttachments(mail, connection, transaction);
             return true;
@@ -114,28 +115,70 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     {
         if (mail == null)
             return;
+        lock (_pendingMails)
+            _pendingMails.Remove(mail.Id);
         lock (_allPlayerMails)
             _allPlayerMails.Remove(mail.Id);
+        foreach (var item in mail.Body.Attachments)
+        {
+            if (item?.Id > 0)
+                itemManager.ReleaseId(item.Id);
+        }
+        mail.Body.Attachments.Clear();
+        mail.IsPendingPublish = false;
         mail.IsDirty = true;
+    }
+
+    /// <summary>
+    /// Assigns an id and holds the letter off the mailbox until <see cref="PublishDelivered"/>.
+    /// </summary>
+    public bool TryStageDelivery(BaseMail mail, out string targetName)
+    {
+        if (!TryAssignDelivery(mail, out targetName))
+            return false;
+
+        mail.IsPendingPublish = true;
+        lock (_pendingMails)
+        lock (_allPlayerMails)
+        {
+            if (_pendingMails.ContainsKey(mail.Id) || _allPlayerMails.ContainsKey(mail.Id))
+            {
+                Logger.Error("TryStageDelivery() - Refusing to replace existing mail {0}", mail.Id);
+                mail.IsPendingPublish = false;
+                return false;
+            }
+
+            _pendingMails.Add(mail.Id, mail);
+        }
+
+        return true;
+    }
+
+    public void PublishDelivered(BaseMail mail)
+    {
+        if (mail == null)
+            return;
+
+        string receiverName;
+        lock (_pendingMails)
+            _pendingMails.Remove(mail.Id);
+
+        mail.IsPendingPublish = false;
+        _allPlayerMails ??= [];
+        lock (_allPlayerMails)
+        {
+            _allPlayerMails[mail.Id] = mail;
+        }
+
+        receiverName = nameManager.GetCharacterName(mail.Header.ReceiverId) ?? mail.Header.ReceiverName;
+        NotifyNewMailByNameIfOnline(mail, receiverName);
     }
 
     private bool TryEnqueue(BaseMail mail, out string targetName)
     {
-        targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
-        var targetId = nameManager.GetCharacterId(mail.Header.ReceiverName);
-        if (!string.Equals(targetName, mail.Header.ReceiverName, StringComparison.InvariantCultureIgnoreCase))
-        {
-            Logger.Debug("TryEnqueue() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
+        if (!TryAssignDelivery(mail, out targetName))
             return false;
-        }
-        if (targetId != mail.Header.ReceiverId)
-        {
-            Logger.Debug("TryEnqueue() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
-            return false;
-        }
 
-        if (mail.Id <= 0)
-            mail.Id = GetNewMailId();
         _allPlayerMails ??= [];
         lock (_allPlayerMails)
         {
@@ -145,9 +188,30 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                 return false;
             }
 
+            mail.IsPendingPublish = false;
             _allPlayerMails.Add(mail.Id, mail);
         }
         NotifyNewMailByNameIfOnline(mail, targetName);
+        return true;
+    }
+
+    private bool TryAssignDelivery(BaseMail mail, out string targetName)
+    {
+        targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
+        var targetId = nameManager.GetCharacterId(mail.Header.ReceiverName);
+        if (!string.Equals(targetName, mail.Header.ReceiverName, StringComparison.InvariantCultureIgnoreCase))
+        {
+            Logger.Debug("TryAssignDelivery() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
+            return false;
+        }
+        if (targetId != mail.Header.ReceiverId)
+        {
+            Logger.Debug("TryAssignDelivery() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
+            return false;
+        }
+
+        if (mail.Id <= 0)
+            mail.Id = GetNewMailId();
         return true;
     }
 
@@ -402,7 +466,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
         foreach (var mtbs in _allPlayerMails)
         {
-            if (!mtbs.Value.IsDirty)
+            if (!mtbs.Value.IsDirty || !MailDeliveryRules.IsPublished(mtbs.Value))
                 continue;
             WriteMail(mtbs.Value, connection, transaction);
             updatedCount++;
@@ -550,7 +614,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         // Try to grab the actual online Character object to send live updates
         var character = worldManager.GetCharacterById(characterId);
         var tempMails = _allPlayerMails.Where(
-            x => x.Value.Body.RecvDate <= DateTime.UtcNow &&
+            x => MailDeliveryRules.IsPublished(x.Value) &&
+                 x.Value.Body.RecvDate <= DateTime.UtcNow &&
                  (x.Value.Header.ReceiverId == characterId || 
                   x.Value.Header.SenderId == characterId)
                  ).

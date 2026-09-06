@@ -236,19 +236,62 @@ public sealed class MailTests
     [Test]
     public async Task TryDeliverOn_RequiresACallerTransaction()
     {
+        var mail = NewOutgoingMail();
+
+        await Assert.That(_mailManager.TryDeliverOn(mail, null, null)).IsFalse();
+        await Assert.That(_mailManager._allPlayerMails.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task StagedDelivery_IsInvisibleUntilPublish()
+    {
+        MakeReturnable();
+        var mail = NewOutgoingMail();
+        mail.Body.CopperCoins = 50;
+
+        await Assert.That(_mailManager.TryStageDelivery(mail, out _)).IsTrue();
+        await Assert.That(mail.IsPendingPublish).IsTrue();
+        await Assert.That(_mailManager._allPlayerMails.Count).IsEqualTo(0);
+        await Assert.That(_mailManager.GetMailById(mail.Id)).IsNull();
+        await Assert.That(_character.Mails.GetAttached(mail.Id, true, true, true)).IsFalse();
+        await Assert.That(_character.Money).IsEqualTo(1000);
+
+        _mailManager.PublishDelivered(mail);
+
+        await Assert.That(mail.IsPendingPublish).IsFalse();
+        await Assert.That(_mailManager.GetMailById(mail.Id)).IsEqualTo(mail);
+        await Assert.That(_mailManager.GetCurrentMailList(_character.Id).ContainsKey(mail.Id)).IsTrue();
+    }
+
+    [Test]
+    public async Task StagedDelivery_DiscardLeavesNoClaimAndDropsAttachments()
+    {
+        var item = new Item(1) { Id = 77, Count = 1 };
+        var mail = NewOutgoingMail();
+        mail.Body.Attachments.Add(item);
+
+        await Assert.That(_mailManager.TryStageDelivery(mail, out _)).IsTrue();
+        _mailManager.DiscardUnpersisted(mail);
+
+        await Assert.That(_mailManager.GetMailById(mail.Id)).IsNull();
+        await Assert.That(_mailManager._allPlayerMails.Count).IsEqualTo(0);
+        await Assert.That(mail.Body.Attachments.Count).IsEqualTo(0);
+        await Assert.That(_mails.GetAttached(mail.Id, true, true, true)).IsFalse();
+    }
+
+    private BaseMail NewOutgoingMail()
+    {
         var mail = new BaseMail
         {
             MailType = MailType.Normal,
             Title = "test",
-            ReceiverName = _character.Name
+            ReceiverName = _character.Name.NormalizeName()
         };
         mail.Header.ReceiverId = _character.Id;
         mail.Header.SenderName = "Sender";
         mail.Body.Text = "test";
         mail.Body.RecvDate = DateTime.UtcNow;
-
-        await Assert.That(_mailManager.TryDeliverOn(mail, null, null)).IsFalse();
-        await Assert.That(_mailManager._allPlayerMails.Count).IsEqualTo(0);
+        return mail;
     }
 
     private BaseMail SeedInboxMail(long id, MailStatus status = MailStatus.Unread)

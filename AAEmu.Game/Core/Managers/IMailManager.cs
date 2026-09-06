@@ -12,6 +12,7 @@ public interface IMailManager : ILoadable
     uint GetNewMailId();
     bool Send(BaseMail mail);
     bool TryDeliverOn(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction);
+    void PublishDelivered(BaseMail mail);
     void DiscardUnpersisted(BaseMail mail);
     bool TryReturnToSender(BaseMail mail);
     bool TryReturnToSenderFor(BaseMail mail, uint characterId);

@@ -1429,6 +1429,7 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             }
 
             transaction.Commit();
+            MailManager.Instance.PublishDelivered(mail);
         }
         catch (Exception ex)
         {

@@ -38,4 +38,12 @@ public class MailDeliveryRulesTests
         await Assert.That(MailDeliveryRules.CanPersistAttachment(new Item(1) { SlotType = SlotType.Inventory, OwnerId = 4 }))
             .IsFalse();
     }
+
+    [Test]
+    public async Task IsPublished_IgnoresALetterWaitingOnCommit()
+    {
+        await Assert.That(MailDeliveryRules.IsPublished(null)).IsFalse();
+        await Assert.That(MailDeliveryRules.IsPublished(new BaseMail())).IsTrue();
+        await Assert.That(MailDeliveryRules.IsPublished(new BaseMail { IsPendingPublish = true })).IsFalse();
+    }
 }

@@ -425,6 +425,7 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
                     }
 
                     transaction.Commit();
+                    MailManager.Instance.PublishDelivered(mail);
                 }
                 catch (Exception ex)
                 {
