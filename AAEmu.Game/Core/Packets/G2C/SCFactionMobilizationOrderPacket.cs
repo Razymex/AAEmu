@@ -4,19 +4,17 @@ using AAEmu.Game.Core.Network.Game;
 namespace AAEmu.Game.Core.Packets.G2C;
 
 /// <summary>
-/// TODO: nothing constructs this packet yet.
+/// Nation-wide broadcast that a Hero issued a Mobilization Order: the rally flag's zone group, the Hero's
+/// character id, and the Hero's name. Opens the accept popup on members' clients, which echo the zone
+/// group and hero id back in their answer.
 /// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
-public class SCFactionMobilizationOrderPacket(short @type, ulong @type2, string name) : GamePacket(SCOffsets.SCFactionMobilizationOrderPacket, 1)
+public class SCFactionMobilizationOrderPacket(ulong zoneGroupType, ulong heroId, string heroName) : GamePacket(SCOffsets.SCFactionMobilizationOrderPacket, 1)
 {
     public override PacketStream Write(PacketStream stream)
     {
-        stream.Write(@type);
-        stream.Write(@type2);
-        stream.Write(name);
+        stream.Write(zoneGroupType);
+        stream.Write(heroId);
+        stream.Write(heroName);
         return stream;
     }
 }

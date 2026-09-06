@@ -38,7 +38,8 @@ public class TodayQuestGameData : Singleton<TodayQuestGameData>, IGameDataLoader
                     ItemNum = reader.GetInt32("item_num", 0),
                     OrUnitReqs = reader.GetBoolean("or_unit_reqs", true),
                     LevelMin = reader.GetInt32("level_min", 0),
-                    LevelMax = reader.GetInt32("level_max", 0)
+                    LevelMax = reader.GetInt32("level_max", 0),
+                    SortId = reader.GetInt32("sort_id", 0)
                 };
                 _stepsById[step.Id] = step;
                 // Prefer the first mapped row when real_step collides (should not in shipped data).

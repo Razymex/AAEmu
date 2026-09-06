@@ -1,21 +1,22 @@
 using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>The Hero panel's ranking tab asking for one faction's roster (the selected faction id).</summary>
 public class CSHeroRankingListPacket() : GamePacket(CSOffsets.CSHeroRankingListPacket, 1)
 {
-    public int TypeValue { get; private set; }
+    public int FactionId { get; private set; }
 
     public override void Read(PacketStream stream)
     {
-        TypeValue = stream.ReadInt32();
+        FactionId = stream.ReadInt32();
+    }
+
+    public override void Execute()
+    {
+        if (Connection?.ActiveChar != null)
+            HeroManager.Instance.SendHeroInfoForRequestedFaction(Connection.ActiveChar, (uint)FactionId);
     }
 }

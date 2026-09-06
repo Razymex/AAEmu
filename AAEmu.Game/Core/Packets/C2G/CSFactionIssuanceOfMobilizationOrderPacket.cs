@@ -1,20 +1,21 @@
 using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
 /// <summary>
-/// TODO(v10): the body is parsed but nothing acts on it yet.
+/// A Hero confirms the issue dialog on a rally flag. Carries the flag doodad the dialog was opened on.
 /// </summary>
-/// <remarks>
-/// which passes each field name alongside the value:
-/// </remarks>
 public class CSFactionIssuanceOfMobilizationOrderPacket() : GamePacket(CSOffsets.CSFactionIssuanceOfMobilizationOrderPacket, 1)
 {
-    public uint Bc { get; private set; }
+    public uint DoodadObjId { get; private set; }
 
     public override void Read(PacketStream stream)
     {
-        Bc = stream.ReadBc();
+        DoodadObjId = stream.ReadBc();
+
+        if (Connection.ActiveChar != null)
+            HeroManager.Instance.IssueMobilizationOrder(Connection.ActiveChar, DoodadObjId);
     }
 }

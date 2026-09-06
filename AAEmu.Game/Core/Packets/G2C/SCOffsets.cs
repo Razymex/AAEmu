@@ -36,9 +36,6 @@ public static class SCOffsets
     public const ushort SCDominionTaxRatePacket = 0x34; // 10.0.2.13
     public const ushort SCNationalTaxRatePacket = 0x21;
     public const ushort SCNationalMonumentChangedPacket = 0x22;
-    public const ushort SCDominionTaxBalancedPacket = 0x23;
-    public const ushort CDominionStartUnkPacket = 0x24;
-    public const ushort SCDominionEndUnkPacket = 0x25;
     public const ushort SCFactionIndependencePacket = 0x26;
     public const ushort SCFactionImmigrateInvitePacket = 0x27;
     public const ushort SCFactionImmigrateInviteResultPacket = 0x28;
@@ -233,7 +230,6 @@ public static class SCOffsets
     public const ushort SCTeamHandOverOwnerOfferResultPacket = 0x11F; // 10.0.2.13
     public const ushort SCSiegeStatePacket = 0x128; // 10.0.2.13
     public const ushort SCSiegeDeclaredPacket = 0x129; // 10.0.2.13
-    public const ushort SCSiegeReinforcePacket = 0xeb;
     public const ushort SCSiegeMemberPacket = 0x12A; // 10.0.2.13
     public const ushort SCSiegeAlertPacket = 0x12B; // 10.0.2.13
     public const ushort SCConflictZoneStatePacket = 0x12D; // 10.0.2.13
@@ -655,6 +651,7 @@ public static class SCOffsets
     public const ushort SCFactionCompetitionUpdatePointPacket = 0x338;
     public const ushort SCFactionImmigrateLimitDataPacket = 0x51;
     public const ushort SCFactionMobilizationOrderPacket = 0x3D;
+    public const ushort SCFactionMobilizationOrderSuccessPacket = 0x3E;
     public const ushort SCFactionRelationRequestPacket = 0x2B;
     public const ushort SCFactionRelationResponsePacket = 0x2C;
     public const ushort SCFamilyChangeMemberLevelPacket = 0x5E;
@@ -680,6 +677,13 @@ public static class SCOffsets
     public const ushort SCHeroElectionMailPacket = 0x2B1;
     public const ushort SCHeroGiveDominionPointPacket = 0x2B6;
     public const ushort SCHeroInfoDeletedPacket = 0x2B2;
+    public const ushort SCHeroRankingListPacket = 0x2AB;
+    public const ushort SCHeroCandidateListPacket = 0x2AC;
+    public const ushort SCHeroListPacket = 0x2AE;
+    public const ushort SCHeroEventStatePacket = 0x2B0;
+    public const ushort SCHeroInfoUpdatedPacket = 0x2B3;
+    public const ushort SCHeroMobilizationOrderUpdatedPacket = 0x2B4;
+    public const ushort SCHeroAllScorePacket = 0x2B5;
     public const ushort SCHeroScoreUpdatedPacket = 0x2AA;
     public const ushort SCHeroSeasonInfoPacket = 0x2A8;
     public const ushort SCHeroSeasonOffPacket = 0x2A9;

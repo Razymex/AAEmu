@@ -360,9 +360,13 @@ public class TodayAssignmentManager : Singleton<TodayAssignmentManager>
             return false;
         }
 
-        if (step.LevelMin > 0 && character.Level < step.LevelMin)
+        // The Hero board's level bounds are hero grades; a character without a seat has grade 0.
+        var level = step.IsHeroBoard ? HeroManager.Instance.GradeOf(character) : character.Level;
+        if (step.IsHeroBoard && level == 0)
             return false;
-        if (step.LevelMax > 0 && character.Level > step.LevelMax)
+        if (step.LevelMin > 0 && level < step.LevelMin)
+            return false;
+        if (step.LevelMax > 0 && level > step.LevelMax)
             return false;
 
         return true;
@@ -419,6 +423,10 @@ public class TodayAssignmentManager : Singleton<TodayAssignmentManager>
         Logger.Info(
             "TodayAssignment done {0}: realStep={1} group={2} quest={3}",
             character.Name, realStep, state.GroupId, completedQuestId);
+
+        var step = TodayQuestGameData.Instance.GetStepByRealStep(realStep);
+        if (step is { IsHeroBoard: true })
+            HeroManager.Instance.OnHeroBoardQuestCompleted(character, step.Id);
     }
 
     private void Unlock(Character character, TodayQuestStepTemplate step, uint realStep)

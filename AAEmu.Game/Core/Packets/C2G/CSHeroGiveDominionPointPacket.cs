@@ -1,21 +1,18 @@
 using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>The Hero's territory dialog distributing Dominion Points; carries the territory's zone group.</summary>
 public class CSHeroGiveDominionPointPacket() : GamePacket(CSOffsets.CSHeroGiveDominionPointPacket, 1)
 {
-    public short TypeValue { get; private set; }
+    public ushort ZoneId { get; private set; }
 
     public override void Read(PacketStream stream)
     {
-        TypeValue = stream.ReadInt16();
+        ZoneId = stream.ReadUInt16();
+        if (Connection?.ActiveChar != null)
+            HeroManager.Instance.GiveDominionPoint(Connection.ActiveChar, ZoneId);
     }
 }

@@ -14,12 +14,18 @@ public class DoodadFuncAttachment : DoodadFuncTemplate
     public int Space { get; init; }
     public BondKind BondKindId { get; init; }
 
+    /// <summary>
+    /// doodad_func_attachments.anim_action_id. Most seat rows (beds, loungers, the Hero throne) carry an
+    /// animation with no bond kind, so the seat interaction fires on either.
+    /// </summary>
+    public int AnimActionId { get; init; }
+
     public override void Use(BaseUnit caster, Doodad owner, uint skillId, int nextPhase = 0)
     {
         Logger.Trace("DoodadFuncAttachment");
         if (caster is Character character)
         {
-            if (BondKindId > BondKind.BondInvalid)
+            if (BondKindId > BondKind.BondInvalid || AnimActionId != 0)
             {
                 var spot = owner.Seat.LoadPassenger(character, owner.ObjId, Space); // ask for a free meta number for landing
                 if (spot == -1)

@@ -3,13 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
-/// <summary>
-/// TODO: nothing constructs this packet yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Notifies a Hero's Dominion Point distribution: giver name and points handed to the territory.</summary>
 public class SCHeroGiveDominionPointPacket(int @type, string name, short @type2, uint point, bool myParty) : GamePacket(SCOffsets.SCHeroGiveDominionPointPacket, 1)
 {
     public override PacketStream Write(PacketStream stream)

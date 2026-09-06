@@ -1,9 +1,13 @@
-﻿using AAEmu.Game.Core.Managers.World;
-using AAEmu.Game.Core.Packets.G2C;
+﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Dominions;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -25,99 +29,63 @@ public class DeclareDominion : SpecialEffectAction
         int value3,
         int value4)
     {
-        if (caster is Character) { Logger.Debug("Special effects: DeclareDominion value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4); }
+        if (caster is Character)
+            Logger.Debug("Special effects: DeclareDominion value1 {0}, value2 {1}, value3 {2}, value4 {3}", value1, value2, value3, value4);
 
-        if (((Unit)caster).Expedition == null)
+        if (caster is not Character declarer)
             return;
 
-        // Check target is not already claimed
-        if (target is not House lodestone)
+        var existingHouse = target as House;
+        var marker = target as Doodad;
+        if (existingHouse == null && marker == null)
             return;
 
-        // Get target zone, radius, etc..
+        var zoneKey = existingHouse != null ? existingHouse.Transform.ZoneId : marker.Transform.ZoneId;
+        var zone = ZoneManager.Instance.GetZoneByKey(zoneKey);
+        if (zone == null)
+            return;
 
-        // Advance building step on target
+        var zoneId = (ushort)zone.GroupId;
+        var isFactionTerritory = SiegeGameData.Instance.GetSiegeZoneSchedule(zoneId) != null;
+        uint expeditionId = 0;
+        uint owningFactionId = 0;
+        if (isFactionTerritory)
+            owningFactionId = (uint)DominionManager.ResolveOwningFaction(declarer);
+        else if (declarer.Expedition != null)
+            expeditionId = (uint)declarer.Expedition.Id;
 
-        // Create new dominion data
-        var dominion = new DominionData
+        var lodestone = existingHouse ?? DominionManager.FindLodestoneInZoneGroup(zoneId);
+        var refuse = DominionClaimRules.GetDeclareRefuse(
+            DominionZoneLockManager.Instance.IsLocked(zoneId),
+            isFactionTerritory,
+            HeroManager.Instance.IsCurrentHero(declarer),
+            owningFactionId != 0,
+            declarer.Expedition != null,
+            SiegeManager.Instance.IsDeclareDominionWindowOpen(zoneId, DateTime.UtcNow),
+            DominionManager.Instance.GetByZoneId(zoneId) != null || GuildDominionManager.Instance.GetByZoneId(zoneId) != null,
+            lodestone != null && SiegeGameData.Instance.IsLodestoneTemplate(lodestone.TemplateId));
+
+        if (refuse != DominionDeclareRefuse.None)
         {
-            House = lodestone.Id,
-            X = lodestone.Transform.World.Position.X,
-            Y = lodestone.Transform.World.Position.Y,
-            Z = lodestone.Transform.World.Position.Z,
-            TaxRate = 50,
-            ReignStartTime = DateTime.UtcNow,
-            ExpeditionId = (uint)((Unit)caster).Expedition.Id,
-            CurHouseTaxMoney = 500000,
-            CurHuntTaxMoney = 9000,
-            PeaceTaxMoney = 300000,
-            CurHouseTaxAaPoint = 0,
-            PeaceTaxAaPoint = 0,
-            LastPaidTime = DateTime.UtcNow,
-            LastSiegeEndTime = DateTime.UtcNow,
-            LastTaxRateChangedTime = DateTime.UtcNow,
-            LastNationalTaxRateChagedTime = DateTime.UtcNow,
-            NationalTaxRate = 500,
-            NationalMonumentDbId = 0,
-            NationalMonumentX = 0,
-            NationalMonumentY = 0,
-            NationalMonumentZ = 0,
-            TerritoryData = new DominionTerritoryData
-            {
-                Id = 6,
-                Id2 = 4771,
-                MaxGates = 1,
-                MaxWalls = 50,
-                RadiusDeclare = 250,
-                RadiusDominion = 110,
-                RadiusSiege = 250,
-                RadiusOffenseHq = 100
-            },
-            SiegeTimers = new DominionSiegeTimers
-            {
-                Bdm = 0,
-                Durations = [0, 0, 0, 0, 0],
-                Fixed = DateTime.MinValue,
-                Started = DateTime.MinValue,
-                SiegePeriod = 1,
-                UnkData = new DominionUnkData
-                {
-                    Id = 0,
-                    Limit = 0,
-                    Ni = 0,
-                    Nr = 0,
-                    X = 0,
-                    Y = 0,
-                    Z = 0,
-                    ObjId = 4,
-                    UnkIds = []
-                },
-                Unk2Data = new DominionUnkData
-                {
-                    Id = 0,
-                    Limit = 0,
-                    Ni = 0,
-                    Nr = 0,
-                    X = 0,
-                    Y = 0,
-                    Z = 0,
-                    ObjId = 0,
-                    UnkIds = []
-                }
-            },
-            NonPvPDuration = 0,
-            NonPvPStart = DateTime.UtcNow,
-            ZoneId = (ushort)ZoneManager.Instance.GetZoneByKey(lodestone.Transform.ZoneId).GroupId,
-            ObjId = 0
-        };
-
-        // Broadcast packet to the entire server
-        WorldManager.Instance.BroadcastPacketToServer(new SCDominionDataPacket(dominion, true, true));
-        if (caster is Character character)
-        {
-            // character.Inventory.Equipment.
-            var backpack = character.Inventory.Equipment.GetItemBySlot((int)EquipmentItemSlot.Backpack);
-            character.Inventory.Equipment.ConsumeItem(ItemTaskType.SkillReagents, backpack.TemplateId, 1, backpack);
+            if (DominionClaimRules.MessageFor(refuse) is { } error)
+                declarer.SendErrorMessage(error);
+            return;
         }
+
+        var claimed = isFactionTerritory
+            ? DominionManager.Instance.DeclareForFaction(zoneId, owningFactionId, lodestone, declarer)
+            : GuildDominionManager.Instance.Declare(zoneId, expeditionId, lodestone, declarer);
+        if (claimed != null)
+            ConsumeCastleClaimBackpack(declarer);
+    }
+
+    private static void ConsumeCastleClaimBackpack(Character declarer)
+    {
+        var pack = declarer.Inventory.GetEquippedBySlot(EquipmentItemSlot.Backpack);
+        if (pack?.Template is not BackpackTemplate backpack || !DeclareBackpackRules.ShouldConsumeOnDeclare(backpack.BackpackType))
+            return;
+        if (pack._holdingContainer == null)
+            return;
+        pack._holdingContainer.ConsumeItem(ItemTaskType.SkillReagents, pack.TemplateId, 1, pack);
     }
 }

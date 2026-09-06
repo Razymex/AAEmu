@@ -1,4 +1,6 @@
 using AAEmu.Commons.Network;
+using AAEmu.Commons.Utils;
+using AAEmu.Game.Models.Game;
 
 namespace AAEmu.World.Core.Packets.Wz;
 
@@ -141,10 +143,70 @@ public class WZGimmickGraspedPacket(int id, int grasperUnitId, bool grasped)
     }
 }
 
-public class WZDominionDeletedPacket()
+/// <summary>
+/// World → Zone claim snapshot. Field order matches <see cref="DominionData.Write"/>. The trailing pad is
+/// the remaining length the dedicate reader consumes after the last named field.
+/// </summary>
+public class WZDominionDataPacket(DominionData dominion, int diagnosticPaddingBytes = DominionData.RequiredPaddingBytes)
+    : ZonePacket(WzOpcodes.DominionData)
+{
+    public const int RequiredPaddingBytes = DominionData.RequiredPaddingBytes;
+
+    protected override void WriteBody(PacketStream stream)
+    {
+        stream.Write((ushort)0);
+        stream.Write((uint)dominion.FactionId);
+        stream.Write(dominion.House);
+        stream.Write(dominion.TaxRate);
+        stream.Write(Helpers.ConvertLongX(dominion.X));
+        stream.Write(Helpers.ConvertLongY(dominion.Y));
+        stream.Write(dominion.Z);
+        stream.Write((long)dominion.CurHouseTaxMoney);
+        stream.Write((long)dominion.CurHuntTaxMoney);
+        stream.Write((long)dominion.PeaceTaxMoney);
+        stream.Write((long)dominion.CurHouseTaxAaPoint);
+        stream.Write((long)dominion.PeaceTaxAaPoint);
+        stream.Write((ulong)Helpers.UnixTime(dominion.LastPaidTime));
+        stream.Write((ulong)Helpers.UnixTime(dominion.LastSiegeEndTime));
+        stream.Write((ulong)Helpers.UnixTime(dominion.ReignStartTime));
+        stream.Write((ulong)Helpers.UnixTime(dominion.LastTaxRateChangedTime));
+        stream.Write(0);
+        stream.WriteBc(0);
+        dominion.TerritoryData?.Write(stream);
+        stream.Write(dominion.SiegeTimers?.SiegePeriod ?? (byte)0);
+        WriteEmptyRosterRecord(stream);
+        stream.Write(0u);
+        stream.Write(false);
+        stream.Write((ulong)Helpers.UnixTime(dominion.NonPvPStart));
+        stream.Write(dominion.NonPvPDuration);
+
+        for (var i = 0; i < diagnosticPaddingBytes; i++)
+            stream.Write((byte)0);
+    }
+
+    private static void WriteEmptyRosterRecord(PacketStream stream)
+    {
+        stream.Write(0u);
+        stream.WriteBc(0);
+        stream.Write(0L);
+        stream.Write(0L);
+        stream.Write(0f);
+        stream.Write((byte)0);
+        stream.Write((byte)0);
+        stream.Write((byte)0);
+        stream.Write(0u);
+        stream.Write(0);
+    }
+}
+
+/// <summary>World → Zone: a zone group's claim was removed.</summary>
+public class WZDominionDeletedPacket(uint zoneGroupId)
     : ZonePacket(WzOpcodes.DominionDeleted)
 {
-    protected override void WriteBody(PacketStream stream) { }
+    protected override void WriteBody(PacketStream stream)
+    {
+        stream.Write(zoneGroupId);
+    }
 }
 
 public class WZSiegeMemberPacket(int typeValue, ulong typeValue2, bool added)

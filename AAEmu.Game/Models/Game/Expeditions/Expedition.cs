@@ -26,7 +26,7 @@ public class Expedition : SystemFaction
     public uint Exp { get; set; }
     public string Notice { get; set; } = string.Empty;
 
-    /// <summary>House.Id of this guild's placed Guild Residence (item_housings designs 830/831/832), or 0 if none placed yet - one per guild regardless of color/design.</summary>
+    /// <summary>House.Id of this guild's placed residence (<c>housings.family</c> <c>hs_expedition_house*</c>), or 0.</summary>
     public uint ResidenceHouseId { get; set; }
 
     /// <summary>Recruitment-board interest bitmask shown as icons in the info panel and set via CSExpeditionInterestUpatePacket (X2Faction:SetMyExpeditionInterest). Carried by SCExpeditionDescPacket's "interest" field - previously always hardcoded to 0 since nothing could set it.</summary>

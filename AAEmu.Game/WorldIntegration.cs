@@ -9,7 +9,9 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Dominions;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Gimmicks;
 using AAEmu.Game.Models.Game.Housing;
@@ -433,6 +435,32 @@ public static class WorldIntegration
     /// <summary>WZHouseBuildProgress / Done (zone key, then housing timeline id).</summary>
     public static Action<uint, ushort, uint, int, int> RelayHouseBuildProgressToZone { get; set; }
     public static Action<uint, ushort> RelayHouseBuildDoneToZone { get; set; }
+
+    /// <summary>
+    /// WZDominionData. Args: zone key, claim snapshot, trailing pad length (use the packet's required pad
+    /// for live claims).
+    /// </summary>
+    public static Action<uint, DominionData, int> RelayDominionClaimedToZone { get; set; }
+
+    /// <summary>
+    /// Fires on Zone (re)connect (ZwOpcodes.ZoneLoaded). DominionManager re-sends any claim the zone owns
+    /// and re-announces its territory agent, like NotifyZoneReadyForHousing. Zones reload independently of
+    /// World and keep no claim state, so this is what lets a claim survive a zone restart.
+    /// </summary>
+    public static Action<uint> NotifyZoneReadyForDominion { get; set; }
+
+    /// <summary>
+    /// Zone-local <c>npc_spawners.g</c> pads (World wires <c>ZoneSpawnerPlacementCatalog</c>).
+    /// Empty when ZoneAuthority is off or the zone file is missing.
+    /// </summary>
+    public static Func<uint, IReadOnlyList<TerritoryAgentStandPad>> GetZoneSpawnerPlacements { get; set; }
+
+    public static IReadOnlyList<TerritoryAgentStandPad> ListZoneSpawnerPlacements(uint zoneId)
+    {
+        if (zoneId == 0 || GetZoneSpawnerPlacements == null)
+            return [];
+        return GetZoneSpawnerPlacements(zoneId) ?? [];
+    }
 
     /// <summary>WZGimmickCreated / Removed / Grasped.</summary>
     public static Action<GimmickSpawnData, int> RelayGimmickCreatedToZone { get; set; }
@@ -1238,6 +1266,20 @@ public static class WorldIntegration
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// True when <paramref name="owner"/> is a Zone-owned mirror NPC that Zone may already have torn
+    /// down and recycled the bcId for (despawned on Zone's own initiative, matching SpawnManager's
+    /// "the id may even belong to another unit by now" comment). Relaying a buff Change/Remove for it
+    /// would hand the zone a stale or wrong-owner unit id; the zone's unit table has no generation check
+    /// and can crash on it. Only Zone-owned mirrors can go stale like this; Characters and World-owned
+    /// units are always safe to relay for.
+    /// </summary>
+    public static bool IsStaleZoneMirror(BaseUnit owner)
+    {
+        return owner is Npc { IsZoneMirror: true } mirrorNpc &&
+               (mirrorNpc.ZoneDespawnSignaled || FindUnitAcrossWorlds(mirrorNpc.ObjId) != mirrorNpc);
     }
 
     /// <summary>

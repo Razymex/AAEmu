@@ -418,7 +418,7 @@ INSERT IGNORE INTO `housings` VALUES (1, 0, 0, 0, 139, 'Archeum Lodestone', 1964
 INSERT IGNORE INTO `housings` VALUES (2, 0, 0, 0, 184, 'Archeum Lodestone', 19952.6, 24275.5, 140.4, 0, 0, 0, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);
 INSERT IGNORE INTO `housings` VALUES (3, 0, 0, 0, 185, 'Archeum Lodestone', 20379.4, 24126.2, 123.6, 0, 0, 0, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);
 INSERT IGNORE INTO `housings` VALUES (4, 0, 0, 0, 186, 'Archeum Lodestone', 21235.7, 23918.5, 165.0, 0, 0, 0, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);
-INSERT IGNORE INTO `housings` VALUES (5, 0, 0, 0, 187, 'Archeum Lodestone', 21441.7, 24211.7, 154.7, 0, 0, 0, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);
+INSERT IGNORE INTO `housings` VALUES (5, 0, 0, 0, 187, 'Archeum Lodestone', 21449.961, 24210.300, 154.376, 0, 0, -0.205, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);
 INSERT IGNORE INTO `housings` VALUES (6, 0, 0, 0, 188, 'Archeum Lodestone', 22048.2, 24241.1, 154.8, 0, 0, 0, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);
 INSERT IGNORE INTO `housings` VALUES (7, 0, 0, 0, 189, 'Archeum Lodestone', 19644.0, 25077.6, 164.6, 0, 0, 0, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);
 INSERT IGNORE INTO `housings` VALUES (8, 0, 0, 0, 190, 'Archeum Lodestone', 20325.6, 25174.6, 172.9, 0, 0, 0, 0, 0, 0, '0001-01-01 00:00:00', '2043-03-03 00:00:00', 2, 0, 0, 0);

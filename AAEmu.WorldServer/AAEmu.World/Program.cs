@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game.Dominions;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Indun;
 using AAEmu.Game.Models.Game.NPChar;
@@ -664,6 +665,25 @@ public static class Program
             AAEmu.Game.Core.Managers.HousingManager.Instance.RelayAllToZone(zoneId);
         WorldIntegration.NotifyZoneReadyForGimmicks = (zoneId, instanceId) =>
             FlushWorldGimmicksToZone(zoneId, instanceId);
+        WorldIntegration.NotifyZoneReadyForDominion = zoneId =>
+        {
+            AAEmu.Game.Core.Managers.DominionManager.Instance.RelayAllToZone(zoneId);
+            AAEmu.Game.Core.Managers.GuildDominionManager.Instance.RelayAllToZone(zoneId);
+        };
+        WorldIntegration.GetZoneSpawnerPlacements = zoneId =>
+        {
+            var all = ZoneSpawnerPlacementCatalog.GetAll(zoneId);
+            if (all.Count == 0)
+                return [];
+            var mapped = new TerritoryAgentStandPad[all.Count];
+            for (var i = 0; i < all.Count; i++)
+            {
+                var p = all[i];
+                mapped[i] = new TerritoryAgentStandPad(p.SpawnerType, p.X, p.Y, p.Z, p.ZRot);
+            }
+
+            return mapped;
+        };
         WorldIntegration.RelayEquipmentChangedToZone = (unitId, body) =>
         {
             // Opcode 0x01E. Empty EquipView type sentinel is 0 (not FFFFFFFF). Kill-switch: AAEMU_WZ_EQUIP=0.
@@ -1191,6 +1211,18 @@ public static class Program
                            ? PlayerEnterService.PrimaryZone() : null);
             zone?.SendPacket(new WZHouseBuildDonePacket(tl));
         };
+        WorldIntegration.RelayDominionClaimedToZone = (rawZoneId, dominion, diagnosticPaddingBytes) =>
+        {
+            var zone = PlayerEnterService.ForZoneId(rawZoneId)
+                       ?? (Environment.GetEnvironmentVariable("AAEMU_ZONE_PRIMARY_FALLBACK") == "1"
+                           ? PlayerEnterService.PrimaryZone() ?? PlayerEnterService.AnyJoinedZone() : null);
+            var packet = new WZDominionDataPacket(dominion, diagnosticPaddingBytes);
+            // Diagnostic aid for post-mortem if this crashes Zone again: the encoded byte length pins down
+            // exactly how many bytes were actually sent, independent of any field-content question.
+            var encodedLength = packet.Encode().Length;
+            zone?.SendPacket(packet);
+            Logger.Info("WZDominionData → zone group={0} expedition={1} rawZoneId={2} bytes={3} padding={4}", dominion.ZoneId, dominion.ExpeditionId, rawZoneId, encodedLength, diagnosticPaddingBytes);
+        };
         WorldIntegration.RelayGimmickCreatedToZone = (data, ownerZoneId) =>
         {
             var zone = ownerZoneId >= 0 ? ZoneSession.Instance.GetJoinedByZoneId((uint)ownerZoneId) : null;
@@ -1391,6 +1423,8 @@ public static class Program
             WorldIntegration.RelayHouseStateToZone = null;
             WorldIntegration.RelayHouseBuildProgressToZone = null;
             WorldIntegration.RelayHouseBuildDoneToZone = null;
+            WorldIntegration.RelayDominionClaimedToZone = null;
+            WorldIntegration.GetZoneSpawnerPlacements = null;
             WorldIntegration.RelayGimmickCreatedToZone = null;
             WorldIntegration.RelayGimmickRemovedToZone = null;
             WorldIntegration.RelayGimmickGraspedToZone = null;

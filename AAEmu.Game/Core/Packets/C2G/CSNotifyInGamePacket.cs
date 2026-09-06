@@ -113,6 +113,12 @@ public class CSNotifyInGamePacket() : GamePacket(CSOffsets.CSNotifyInGamePacket,
         // Daily schedule: load persisted contracts for today, then reset-count budget.
         TodayAssignmentManager.Instance.OnCharacterEnterWorld(Connection.ActiveChar);
 
+        // Territory ownership for the world map and the territory UI (both the Hero/faction and the guild
+        // castle systems), then the Hero panel state.
+        DominionManager.Instance.SendAllDominionsTo(Connection);
+        GuildDominionManager.Instance.SendAllDominionsTo(Connection);
+        HeroManager.Instance.SendHeroInfo(Connection.ActiveChar);
+
         // Lobby already sent these during FinishState 0, but the in-world player object
         // is built later and does not keep that map. Listing authority is read here.
         Connection.SendPacket(new SCAccountAttributeConfigPacket());
