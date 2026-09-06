@@ -1428,9 +1428,6 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
                 return;
             }
 
-            if (mail.Body.Attachments.Count > 0)
-                ItemManager.Instance.Save(connection, transaction);
-
             transaction.Commit();
         }
         catch (Exception ex)

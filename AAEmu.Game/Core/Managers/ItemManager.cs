@@ -12,6 +12,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Loots;
 using AAEmu.Game.Models.Game.Items.Procs;
@@ -1870,6 +1871,71 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         }
 
         return (updateCount, deleteCount, containerUpdateCount);
+    }
+
+    /// <summary>
+    /// Writes only these mail attachments on the caller's transaction. Does not flush
+    /// deletions or other dirty inventory.
+    /// </summary>
+    public int PersistMailAttachments(IReadOnlyCollection<Item> items, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+
+        var written = 0;
+        using var command = connection.CreateCommand();
+        command.Connection = connection;
+        command.Transaction = transaction;
+        command.CommandText = "REPLACE INTO items (" +
+            "`id`,`type`,`template_id`,`container_id`,`slot_type`,`slot`,`count`,`details`,`lifespan_mins`,`made_unit_id`," +
+            "`unsecure_time`,`unpack_time`,`owner`,`created_at`,`grade`,`flags`,`ucc`," +
+            "`expire_time`,`expire_online_minutes`,`charge_time`,`charge_count`" +
+            ") VALUES ( " +
+            "@id, @type, @template_id, @container_id, @slot_type, @slot, @count, @details, @lifespan_mins, @made_unit_id, " +
+            "@unsecure_time,@unpack_time,@owner,@created_at,@grade,@flags,@ucc," +
+            "@expire_time,@expire_online_minutes,@charge_time,@charge_count" +
+            ")";
+
+        foreach (var item in items)
+        {
+            if (!MailDeliveryRules.CanPersistAttachment(item))
+                throw new InvalidOperationException($"Mail attachment {item?.Id} is not mail-owned");
+
+            var details = new Commons.Network.PacketStream();
+            item.WriteDetails(details);
+
+            command.Parameters.Clear();
+            command.Parameters.AddWithValue("@id", item.Id);
+            command.Parameters.AddWithValue("@type", item.GetType().ToString());
+            command.Parameters.AddWithValue("@template_id", item.TemplateId);
+            command.Parameters.AddWithValue("@container_id", item._holdingContainer?.ContainerId ?? 0);
+            command.Parameters.AddWithValue("@slot_type", (int)item.SlotType);
+            command.Parameters.AddWithValue("@slot", item.Slot);
+            command.Parameters.AddWithValue("@count", item.Count);
+            command.Parameters.AddWithValue("@details", details.GetBytes());
+            command.Parameters.AddWithValue("@lifespan_mins", item.LifespanMins);
+            command.Parameters.AddWithValue("@made_unit_id", item.MadeUnitId);
+            command.Parameters.AddWithValue("@unsecure_time", item.UnsecureTime);
+            command.Parameters.AddWithValue("@unpack_time", item.UnpackTime);
+            command.Parameters.AddWithValue("@created_at", item.CreateTime);
+            command.Parameters.AddWithValue("@owner", item.OwnerId);
+            command.Parameters.AddWithValue("@grade", item.Grade);
+            command.Parameters.AddWithValue("@flags", (byte)item.ItemFlags);
+            command.Parameters.AddWithValue("@ucc", item.UccId);
+            command.Parameters.AddWithValue("@expire_time", item.ExpirationTime);
+            command.Parameters.AddWithValue("@expire_online_minutes", item.ExpirationOnlineMinutesLeft);
+            command.Parameters.AddWithValue("@charge_time", item.ChargeStartTime);
+            command.Parameters.AddWithValue("@charge_count", item.ChargeCount);
+            command.Prepare();
+            if (command.ExecuteNonQuery() < 1)
+                throw new InvalidOperationException($"Mail attachment {item.Id} did not write");
+
+            item.IsDirty = false;
+            written++;
+        }
+
+        return written;
     }
 
     public SlotType GetContainerSlotTypeByContainerId(ulong dbId)

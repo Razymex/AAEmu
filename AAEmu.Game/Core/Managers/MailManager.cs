@@ -73,12 +73,17 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     {
         if (mail == null || connection == null || transaction == null)
             return false;
+
+        MailDeliveryRules.PrepareAttachments(mail);
         if (!TryEnqueue(mail, out _))
             return false;
 
         try
         {
-            Save(connection, transaction);
+            // Only this letter (and its attachments). The manager-wide Save would mark
+            // unrelated dirty mail / deletions clean before the caller commits.
+            WriteMail(mail, connection, transaction);
+            PersistMailAttachments(mail, connection, transaction);
             return true;
         }
         catch (Exception ex)
@@ -87,6 +92,22 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             DiscardUnpersisted(mail);
             return false;
         }
+    }
+
+    private void PersistMailAttachments(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (mail.Body.Attachments.Count == 0)
+            return;
+
+        foreach (var item in mail.Body.Attachments)
+        {
+            if (!MailDeliveryRules.CanPersistAttachment(item))
+                throw new GameException($"Mail {mail.Id} attachment {item?.Id} is not owned by a mail slot");
+        }
+
+        var written = itemManager.PersistMailAttachments(mail.Body.Attachments, connection, transaction);
+        if (written != mail.Body.Attachments.Count)
+            throw new GameException($"Mail {mail.Id} persisted {written}/{mail.Body.Attachments.Count} attachments");
     }
 
     public void DiscardUnpersisted(BaseMail mail)
@@ -383,59 +404,62 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         {
             if (!mtbs.Value.IsDirty)
                 continue;
-            using (var command = connection.CreateCommand())
-            {
-                command.Connection = connection;
-                command.Transaction = transaction;
-                command.CommandText = "REPLACE INTO mails(" +
-                    "`id`,`type`,`status`,`title`,`text`,`sender_id`,`sender_name`," +
-                    "`attachment_count`,`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`," +
-                    "`returned`,`extra`,`money_amount_1`,`money_amount_2`,`money_amount_3`," +
-                    "`attachment0`,`attachment1`,`attachment2`,`attachment3`,`attachment4`,`attachment5`," +
-                    "`attachment6`,`attachment7`,`attachment8`,`attachment9`" +
-                    ") VALUES (" +
-                    "@id, @type, @status, @title, @text, @senderId, @senderName, " +
-                    "@attachment_count, @receiverId, @receiverName, @openDate, @sendDate, @receivedDate, " +
-                    "@returned, @extra, @money1, @money2, @money3," +
-                    "@attachment0, @attachment1, @attachment2, @attachment3, @attachment4, @attachment5, " +
-                    "@attachment6, @attachment7, @attachment8, @attachment9" +
-                    ")";
-
-                command.Parameters.AddWithValue("@id", mtbs.Value.Id);
-                command.Parameters.AddWithValue("@openDate", mtbs.Value.Header.OpenDate);
-                command.Parameters.AddWithValue("@type", (byte)mtbs.Value.Header.Type);
-                command.Parameters.AddWithValue("@status", mtbs.Value.Header.Status);
-                command.Parameters.AddWithValue("@title", mtbs.Value.Header.Title);
-                command.Parameters.AddWithValue("@text", mtbs.Value.Body.Text);
-                command.Parameters.AddWithValue("@senderId", mtbs.Value.Header.SenderId);
-                command.Parameters.AddWithValue("@senderName", mtbs.Value.Header.SenderName);
-                command.Parameters.AddWithValue("@attachment_count", mtbs.Value.Header.Attachments);
-                command.Parameters.AddWithValue("@receiverId", mtbs.Value.Header.ReceiverId);
-                command.Parameters.AddWithValue("@receiverName", mtbs.Value.Header.ReceiverName);
-                command.Parameters.AddWithValue("@sendDate", mtbs.Value.Body.SendDate);
-                command.Parameters.AddWithValue("@receivedDate", mtbs.Value.Body.RecvDate);
-                command.Parameters.AddWithValue("@returned", mtbs.Value.Header.Returned ? 1 : 0);
-                command.Parameters.AddWithValue("@extra", mtbs.Value.Header.Extra);
-                command.Parameters.AddWithValue("@money1", mtbs.Value.Body.CopperCoins);
-                command.Parameters.AddWithValue("@money2", mtbs.Value.Body.BillingAmount);
-                command.Parameters.AddWithValue("@money3", mtbs.Value.Body.MoneyAmount2);
-
-                for (var i = 0; i < MailBody.MaxMailAttachments; i++)
-                {
-                    if (i >= mtbs.Value.Body.Attachments.Count)
-                        command.Parameters.AddWithValue("@attachment" + i.ToString(), 0);
-                    else
-                        command.Parameters.AddWithValue("@attachment" + i.ToString(), mtbs.Value.Body.Attachments[i].Id);
-                }
-
-                command.Prepare();
-                command.ExecuteNonQuery();
-                updatedCount++;
-                mtbs.Value.IsDirty = false;
-            }
+            WriteMail(mtbs.Value, connection, transaction);
+            updatedCount++;
         }
 
         return (updatedCount, deletedCount);
+    }
+
+    private static void WriteMail(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Connection = connection;
+        command.Transaction = transaction;
+        command.CommandText = "REPLACE INTO mails(" +
+            "`id`,`type`,`status`,`title`,`text`,`sender_id`,`sender_name`," +
+            "`attachment_count`,`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`," +
+            "`returned`,`extra`,`money_amount_1`,`money_amount_2`,`money_amount_3`," +
+            "`attachment0`,`attachment1`,`attachment2`,`attachment3`,`attachment4`,`attachment5`," +
+            "`attachment6`,`attachment7`,`attachment8`,`attachment9`" +
+            ") VALUES (" +
+            "@id, @type, @status, @title, @text, @senderId, @senderName, " +
+            "@attachment_count, @receiverId, @receiverName, @openDate, @sendDate, @receivedDate, " +
+            "@returned, @extra, @money1, @money2, @money3," +
+            "@attachment0, @attachment1, @attachment2, @attachment3, @attachment4, @attachment5, " +
+            "@attachment6, @attachment7, @attachment8, @attachment9" +
+            ")";
+
+        command.Parameters.AddWithValue("@id", mail.Id);
+        command.Parameters.AddWithValue("@openDate", mail.Header.OpenDate);
+        command.Parameters.AddWithValue("@type", (byte)mail.Header.Type);
+        command.Parameters.AddWithValue("@status", mail.Header.Status);
+        command.Parameters.AddWithValue("@title", mail.Header.Title);
+        command.Parameters.AddWithValue("@text", mail.Body.Text);
+        command.Parameters.AddWithValue("@senderId", mail.Header.SenderId);
+        command.Parameters.AddWithValue("@senderName", mail.Header.SenderName);
+        command.Parameters.AddWithValue("@attachment_count", mail.Header.Attachments);
+        command.Parameters.AddWithValue("@receiverId", mail.Header.ReceiverId);
+        command.Parameters.AddWithValue("@receiverName", mail.Header.ReceiverName);
+        command.Parameters.AddWithValue("@sendDate", mail.Body.SendDate);
+        command.Parameters.AddWithValue("@receivedDate", mail.Body.RecvDate);
+        command.Parameters.AddWithValue("@returned", mail.Header.Returned ? 1 : 0);
+        command.Parameters.AddWithValue("@extra", mail.Header.Extra);
+        command.Parameters.AddWithValue("@money1", mail.Body.CopperCoins);
+        command.Parameters.AddWithValue("@money2", mail.Body.BillingAmount);
+        command.Parameters.AddWithValue("@money3", mail.Body.MoneyAmount2);
+
+        for (var i = 0; i < MailBody.MaxMailAttachments; i++)
+        {
+            if (i >= mail.Body.Attachments.Count)
+                command.Parameters.AddWithValue("@attachment" + i.ToString(), 0);
+            else
+                command.Parameters.AddWithValue("@attachment" + i.ToString(), mail.Body.Attachments[i].Id);
+        }
+
+        command.Prepare();
+        command.ExecuteNonQuery();
+        mail.IsDirty = false;
     }
 
     [ThreadStatic] private static int t_persistDeferDepth;
