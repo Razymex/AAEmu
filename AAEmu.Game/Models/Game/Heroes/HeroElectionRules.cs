@@ -178,8 +178,8 @@ public static class HeroElectionRules
         level >= minLevel && leadershipPoint >= minPoint;
 
     /// <summary>
-    /// Rows whose mail has not been marked sent. Used so a later tick can finish a post-commit send
-    /// that was interrupted, without treating "row exists" as "mail delivered".
+    /// Rows whose mail has not been claimed. The live path claims (sets sent=1) before Send so a
+    /// crash after delivery cannot enqueue a second item-bearing reward.
     /// </summary>
     public static List<uint> PendingMailCharacterIds(IEnumerable<(uint CharacterId, bool MailSent)> rows)
     {

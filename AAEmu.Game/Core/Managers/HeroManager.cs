@@ -1056,7 +1056,7 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
                     {
                         using var insert = connection.CreateCommand();
                         insert.Transaction = persist;
-                        insert.CommandText = "INSERT INTO hero_candidates (cycle_id, faction_id, character_id, leadership_point_at_ranking) VALUES (@c,@f,@ch,@p)";
+                        insert.CommandText = "INSERT INTO hero_candidates (cycle_id, faction_id, character_id, leadership_point_at_ranking, candidate_mail_sent, reward_mail_sent) VALUES (@c,@f,@ch,@p,0,0)";
                         insert.Parameters.AddWithValue("@c", cycle.Id);
                         insert.Parameters.AddWithValue("@f", factionId);
                         insert.Parameters.AddWithValue("@ch", characterId);
@@ -1315,24 +1315,43 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
 
     private static void TrySendCandidateMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, HeroCondition condition, HeroCycle cycle)
     {
-        if (!SendCandidateMail(characterId, condition, cycle))
+        if (!TryClaimMailSent(connection, cycleId, factionId, characterId, candidateMail: true))
             return;
-        MarkMailSent(connection, cycleId, factionId, characterId, candidateMail: true);
+        if (!SendCandidateMail(characterId, condition, cycle))
+            ClearMailSent(connection, cycleId, factionId, characterId, candidateMail: true);
     }
 
     private static void TrySendRewardMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
     {
-        if (!SendRewardMail(characterId, reward, condition, cycle))
+        if (!TryClaimMailSent(connection, cycleId, factionId, characterId, candidateMail: false))
             return;
-        MarkMailSent(connection, cycleId, factionId, characterId, candidateMail: false);
+        if (!SendRewardMail(characterId, reward, condition, cycle))
+            ClearMailSent(connection, cycleId, factionId, characterId, candidateMail: false);
     }
 
-    private static void MarkMailSent(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail)
+    /// <summary>
+    /// Claims the send so a later tick cannot create a second item-bearing mail. Only the claim that
+    /// updates a still-unsent row proceeds to <c>Send</c>.
+    /// </summary>
+    private static bool TryClaimMailSent(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail)
     {
         using var command = connection.CreateCommand();
         command.CommandText = candidateMail
-            ? "UPDATE hero_candidates SET candidate_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch"
-            : "UPDATE hero_candidates SET reward_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch";
+            ? "UPDATE hero_candidates SET candidate_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch AND candidate_mail_sent=0"
+            : "UPDATE hero_candidates SET reward_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch AND reward_mail_sent=0";
+        command.Parameters.AddWithValue("@c", cycleId);
+        command.Parameters.AddWithValue("@f", factionId);
+        command.Parameters.AddWithValue("@ch", characterId);
+        command.Prepare();
+        return command.ExecuteNonQuery() == 1;
+    }
+
+    private static void ClearMailSent(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = candidateMail
+            ? "UPDATE hero_candidates SET candidate_mail_sent=0 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch"
+            : "UPDATE hero_candidates SET reward_mail_sent=0 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch";
         command.Parameters.AddWithValue("@c", cycleId);
         command.Parameters.AddWithValue("@f", factionId);
         command.Parameters.AddWithValue("@ch", characterId);
