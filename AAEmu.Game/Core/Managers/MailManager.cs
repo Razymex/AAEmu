@@ -88,8 +88,18 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             _allPlayerMails.Add(mail.Id, mail);
         }
         NotifyNewMailByNameIfOnline(mail, targetName);
-        PersistNow();
-        return true;
+        if (EnsurePersisted() != WorldSaveStatus.Failed)
+            return true;
+
+        ForgetUnpersisted(mail);
+        return false;
+    }
+
+    private void ForgetUnpersisted(BaseMail mail)
+    {
+        lock (_allPlayerMails)
+            _allPlayerMails.Remove(mail.Id);
+        mail.IsDirty = true;
     }
 
     public bool TryReturnToSender(BaseMail mail)
@@ -428,27 +438,31 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     /// then reloaded the pre-claim row and the letter came back unclaimed.
     /// No-ops in tests that do not register <see cref="ISaveManager"/>.
     /// </summary>
-    public void PersistNow()
+    public void PersistNow() => _ = EnsurePersisted();
+
+    private WorldSaveStatus EnsurePersisted()
     {
         if (t_persistDeferDepth > 0)
         {
             t_persistRequested = true;
-            return;
+            return WorldSaveStatus.Saved;
         }
 
-        FlushPersist();
+        return FlushPersist();
     }
 
-    private void FlushPersist()
+    private WorldSaveStatus FlushPersist()
     {
         var saver = SingletonContainer.ServiceProvider?.GetService<ISaveManager>();
         if (saver == null)
-            return;
+            return WorldSaveStatus.Saved;
 
         // A save that is already running took the gate after this operation released it, so
         // it carries everything the operation wrote. Nothing is lost by not saving twice.
-        if (!saver.DoSave())
+        var status = saver.TrySave();
+        if (status == WorldSaveStatus.Busy)
             Logger.Debug("Mail persist folded into the save already in progress");
+        return status;
     }
 
     private sealed class PersistScope(MailManager owner) : IDisposable

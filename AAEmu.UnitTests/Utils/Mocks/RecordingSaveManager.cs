@@ -19,6 +19,8 @@ public sealed class RecordingSaveManager : ISaveManager
     /// <summary>How many callers were answered false because a save was already running.</summary>
     public int BusySkips { get; private set; }
 
+    public bool FailNext { get; set; }
+
     public Action OnSave { get; set; }
 
     public ShutdownTask ShutdownTask { get; set; }
@@ -33,12 +35,20 @@ public sealed class RecordingSaveManager : ISaveManager
     {
     }
 
-    public bool DoSave()
+    public bool DoSave() => TrySave() == WorldSaveStatus.Saved;
+
+    public WorldSaveStatus TrySave()
     {
         if (_isSaving)
         {
             BusySkips++;
-            return false;
+            return WorldSaveStatus.Busy;
+        }
+
+        if (FailNext)
+        {
+            FailNext = false;
+            return WorldSaveStatus.Failed;
         }
 
         PersistenceGate.EnterSave();
@@ -47,7 +57,7 @@ public sealed class RecordingSaveManager : ISaveManager
             _isSaving = true;
             SaveCount++;
             OnSave?.Invoke();
-            return true;
+            return WorldSaveStatus.Saved;
         }
         finally
         {

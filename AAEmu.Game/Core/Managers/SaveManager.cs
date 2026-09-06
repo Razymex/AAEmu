@@ -66,16 +66,18 @@ public class SaveManager(
     /// running; that save took the <see cref="PersistenceGate"/> after every in-flight money
     /// operation finished, so it already carries the caller's state.
     /// </summary>
-    public bool DoSave()
+    public bool DoSave() => TrySave() == WorldSaveStatus.Saved;
+
+    public WorldSaveStatus TrySave()
     {
         if (_isSaving)
-            return false;
+            return WorldSaveStatus.Busy;
         if (PersistenceGate.IsOperationHeld)
         {
             // Inside a money operation on this very thread. Taking the gate exclusively here
             // would deadlock; hand the request to the operation's own end-of-scope flush.
             mailManager.PersistNow();
-            return false;
+            return WorldSaveStatus.Busy;
         }
 
         var saved = false;
@@ -100,7 +102,7 @@ public class SaveManager(
             PersistenceGate.ExitSave();
         }
 
-        return saved;
+        return saved ? WorldSaveStatus.Saved : WorldSaveStatus.Failed;
     }
 
     private bool SaveLocked()

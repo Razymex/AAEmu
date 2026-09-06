@@ -402,18 +402,32 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
             mail.Body.Text = string.Empty;
             mail.Body.CopperCoins = payable;
             mail.Body.RecvDate = now;
-            mail.Send();
 
-            var remaining = DominionClaimRules.AfterTaxPayout(
-                dominion.CurHouseTaxMoney, dominion.CurHuntTaxMoney, dominion.PeaceTaxMoney, payable);
-            dominion.CurHouseTaxMoney = (int)remaining.House;
-            dominion.CurHuntTaxMoney = (int)remaining.Hunt;
-            dominion.PeaceTaxMoney = (int)remaining.Peace;
-            dominion.LastPaidTime = now;
+            var beforeSend = new DominionClaimRules.TaxPool(
+                dominion.CurHouseTaxMoney, dominion.CurHuntTaxMoney, dominion.PeaceTaxMoney, dominion.LastPaidTime);
+            var settled = DominionClaimRules.SettleTaxPool(beforeSend, payable, now);
+            ApplyTaxPool(dominion, settled);
             PersistTaxPool(dominion);
+
+            var kept = DominionClaimRules.AfterTaxMail(settled, beforeSend, mail.Send());
+            if (kept != settled)
+            {
+                ApplyTaxPool(dominion, kept);
+                PersistTaxPool(dominion);
+                Logger.Warn("Dominion tax payout: zone {0} mail failed, restored pool {1}", dominion.ZoneId, payable);
+                continue;
+            }
 
             Logger.Info("Dominion tax payout: zone {0}, {1} copper to {2}", dominion.ZoneId, payable, receiverName);
         }
+    }
+
+    private static void ApplyTaxPool(DominionData dominion, DominionClaimRules.TaxPool pool)
+    {
+        dominion.CurHouseTaxMoney = pool.House;
+        dominion.CurHuntTaxMoney = pool.Hunt;
+        dominion.PeaceTaxMoney = pool.Peace;
+        dominion.LastPaidTime = pool.LastPaid;
     }
 
     private void PersistTaxPool(DominionData dominion)

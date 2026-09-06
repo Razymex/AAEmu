@@ -75,6 +75,19 @@ public static class DominionClaimRules
         return (house, hunt, peace);
     }
 
+    public readonly record struct TaxPool(int House, int Hunt, int Peace, DateTime LastPaid);
+
+    /// <summary>Drains the pool and stamps last-paid so a later tick cannot pay the same week again.</summary>
+    public static TaxPool SettleTaxPool(TaxPool pool, int payable, DateTime paidAt)
+    {
+        var remaining = AfterTaxPayout(pool.House, pool.Hunt, pool.Peace, payable);
+        return new((int)remaining.House, (int)remaining.Hunt, (int)remaining.Peace, paidAt);
+    }
+
+    /// <summary>A failed send must not keep the settlement; a successful send keeps the claimed week.</summary>
+    public static TaxPool AfterTaxMail(TaxPool settled, TaxPool beforeSend, bool sendSucceeded) =>
+        sendSucceeded ? settled : beforeSend;
+
     private static long DrainTaxBucket(long amount, ref long payable)
     {
         if (amount <= 0 || payable <= 0)
@@ -141,7 +154,8 @@ public static class DominionClaimRules
         else if (!hasExpedition)
             return DominionDeclareRefuse.NoExpedition;
 
-        if (!windowOpen)
+        // Guild territories have no siege_zones schedule, so the declare window is a faction-only gate.
+        if (isFactionTerritory && !windowOpen)
             return DominionDeclareRefuse.WindowClosed;
         if (alreadyClaimed)
             return DominionDeclareRefuse.AlreadyClaimed;

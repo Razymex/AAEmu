@@ -15,6 +15,7 @@ using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Teleport;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models.Tasks.Heroes;
+using AAEmu.Game.Utils;
 
 using MySql.Data.MySqlClient;
 
@@ -143,36 +144,70 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
     private static void EnsureLeadershipPeriodReset(HeroCycle cycle)
     {
         using var connection = MySQL.CreateConnection();
-        using (var check = connection.CreateCommand())
+        using var transaction = connection.BeginTransaction();
+        var rolledOnline = new List<(Character Character, int Period, int Current)>();
+        try
         {
-            check.CommandText = "SELECT COUNT(*) FROM hero_period_resets WHERE cycle_id=@c";
-            check.Parameters.AddWithValue("@c", cycle.Id);
-            check.Prepare();
-            if (Convert.ToInt64(check.ExecuteScalar()) > 0)
-                return;
+            using (var check = connection.CreateCommand())
+            {
+                check.Transaction = transaction;
+                check.CommandText = "SELECT COUNT(*) FROM hero_period_resets WHERE cycle_id=@c";
+                check.Parameters.AddWithValue("@c", cycle.Id);
+                check.Prepare();
+                if (Convert.ToInt64(check.ExecuteScalar()) > 0)
+                {
+                    transaction.Rollback();
+                    return;
+                }
+            }
+
+            // Skip already-zeroed current so a retry cannot copy 0 over a good period score.
+            using (var roll = connection.CreateCommand())
+            {
+                roll.Transaction = transaction;
+                roll.CommandText = "UPDATE characters SET leadership_period_point=leadership_point, leadership_point=0 WHERE leadership_point<>0";
+                roll.ExecuteNonQuery();
+            }
+
+            foreach (var character in WorldManager.Instance.GetAllCharacters())
+            {
+                if (character.LeadershipPoint == 0)
+                    continue;
+
+                rolledOnline.Add((character, character.LeadershipPeriodPoint, character.LeadershipPoint));
+                var rolled = HeroElectionRules.RollLeadershipPeriod(character.LeadershipPeriodPoint, character.LeadershipPoint);
+                character.LeadershipPeriodPoint = rolled.Period;
+                character.LeadershipPoint = rolled.Current;
+                character.Save(connection, transaction);
+            }
+
+            using (var mark = connection.CreateCommand())
+            {
+                mark.Transaction = transaction;
+                mark.CommandText = "INSERT INTO hero_period_resets (cycle_id, reset_at) VALUES (@c,@t)";
+                mark.Parameters.AddWithValue("@c", cycle.Id);
+                mark.Parameters.AddWithValue("@t", DateTime.UtcNow);
+                mark.Prepare();
+                mark.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+        catch (Exception ex)
+        {
+            transaction.Rollback();
+            foreach (var (character, period, current) in rolledOnline)
+            {
+                character.LeadershipPeriodPoint = period;
+                character.LeadershipPoint = current;
+            }
+
+            Logger.Error(ex, "Hero cycle {0}: leadership period reset failed", cycle.Id);
+            return;
         }
 
-        using (var roll = connection.CreateCommand())
-        {
-            roll.CommandText = "UPDATE characters SET leadership_period_point=leadership_point, leadership_point=0";
-            roll.ExecuteNonQuery();
-        }
-
-        using (var mark = connection.CreateCommand())
-        {
-            mark.CommandText = "INSERT INTO hero_period_resets (cycle_id, reset_at) VALUES (@c,@t)";
-            mark.Parameters.AddWithValue("@c", cycle.Id);
-            mark.Parameters.AddWithValue("@t", DateTime.UtcNow);
-            mark.Prepare();
-            mark.ExecuteNonQuery();
-        }
-
-        // Online characters hold the authoritative figures and would save the old values back; roll them
-        // live and refresh the sheet + voter gate.
         foreach (var character in WorldManager.Instance.GetAllCharacters())
         {
-            character.LeadershipPeriodPoint = character.LeadershipPoint;
-            character.LeadershipPoint = 0;
             character.SendPacket(new SCCharacterGamePointsPacket(character));
             character.SendPacket(new SCHeroSeasonOffPacket(0, character.LeadershipPeriodPoint));
         }
@@ -846,34 +881,78 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
                 HeroContentConfig.MobilizationAcceptLevel, HeroContentConfig.MobilizationAcceptLeadership))
             return false;
 
+        if (order.AcceptedCharacterIds.Contains(character.Id))
+            return false;
+
         var flag = FindDoodadAcrossWorlds(order.FlagObjId);
-        if (flag == null)
+        if (!HeroElectionRules.CanTransferToMobilizationFlag(flag != null, flag?.ParentWorld != null))
         {
             Logger.Warn("Mobilization order for faction {0}: rally flag {1} is no longer spawned", nationFactionId, order.FlagObjId);
             return false;
         }
 
-        if (!order.AcceptedCharacterIds.Add(character.Id))
+        if (!TryTransferToRallyFlag(character, flag))
+        {
+            Logger.Warn("Mobilization order for faction {0}: could not transfer {1} to flag {2}", nationFactionId, character.Name, order.FlagObjId);
             return false;
+        }
 
-        var pos = flag.Transform.World.Position;
-        character.ForceDismount();
-        character.DisabledSetPosition = true;
-        character.SendPacket(new SCTeleportUnitPacket(TeleportReason.Etc, 0, pos.X, pos.Y, pos.Z, 0f));
-        SendMobilizationGiveItem(character);
+        order.AcceptedCharacterIds.Add(character.Id);
+
+        if (!SendMobilizationGiveItem(character))
+            Logger.Warn("Mobilization order for faction {0}: rally item mail failed for {1}", nationFactionId, character.Name);
         Logger.Info("Mobilization order: {0} rallied to faction {1}'s flag", character.Name, nationFactionId);
         return true;
     }
 
-    private static void SendMobilizationGiveItem(Character character)
+    private static bool TryTransferToRallyFlag(Character character, Doodad flag)
+    {
+        var destination = flag?.Transform;
+        if (destination == null || flag.ParentWorld == null)
+            return false;
+
+        var position = destination.World.Position;
+        var yaw = destination.World.Rotation.Z.DegToRad();
+
+        character.ForceDismount();
+
+        if (HeroElectionRules.NeedsInstanceLoad(character.Transform.InstanceId, destination.InstanceId))
+        {
+            // Crossing instances means a loading screen, and the client answers it with
+            // CSInstanceLoaded — which is the only thing that clears DisabledSetPosition.
+            character.DisabledSetPosition = true;
+            character.SendPacket(new SCLoadInstancePacket(
+                destination.WorldId,
+                destination.ZoneId,
+                position.X,
+                position.Y,
+                position.Z,
+                destination.World.Rotation.X.DegToRad(),
+                destination.World.Rotation.Y.DegToRad(),
+                yaw));
+            character.Transform = destination.Clone(character);
+        }
+        else
+        {
+            // Same level: the client streams the new area seamlessly and never sends
+            // CSInstanceLoaded, so blocking movement here would freeze the player server-side.
+            character.SetPosition(position.X, position.Y, position.Z, 0f, 0f, yaw);
+            character.Transform.FinalizeTransform();
+        }
+
+        character.SendPacket(new SCTeleportUnitPacket(TeleportReason.MobilizationOrder, 0, position.X, position.Y, position.Z, yaw));
+        return true;
+    }
+
+    private static bool SendMobilizationGiveItem(Character character)
     {
         var itemId = HeroContentConfig.MobilizationGiveItemId;
         if (itemId == 0)
-            return;
+            return true;
 
         var item = ItemManager.Instance.Create(itemId, 1, 0, true);
         if (item == null)
-            return;
+            return false;
 
         var mail = new BaseMail
         {
@@ -887,7 +966,7 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         mail.Body.Text = HeroMailWire.LocaleBody;
         mail.Body.RecvDate = DateTime.UtcNow;
         mail.Body.Attachments.Add(item);
-        mail.Send();
+        return mail.Send();
     }
 
     // ---- Ballot / candidates / finalize --------------------------------------------------------------
@@ -1377,8 +1456,7 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         mail.Header.Status = MailStatus.Unread;
         mail.Body.Text = HeroMailWire.FormatPeriodBody(condition.CandidateMailBody, abstain.Start, abstain.End);
         mail.Body.RecvDate = DateTime.UtcNow;
-        mail.Send();
-        return true;
+        return mail.Send();
     }
 
     private static bool SendRewardMail(uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
@@ -1412,7 +1490,6 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             }
         }
 
-        mail.Send();
-        return true;
+        return mail.Send();
     }
 }

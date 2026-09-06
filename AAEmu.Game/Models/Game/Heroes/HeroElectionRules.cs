@@ -89,6 +89,19 @@ public static class HeroElectionRules
         ServerCalendar.AsUtc(utcNow) < ServerCalendar.AsUtc(expiresAtUtc) && level >= minLevel && leadership >= minLeadership;
 
     /// <summary>
+    /// Previous-period score takes the still-running current total, then current restarts. A zero
+    /// current must not overwrite a period score that already rolled (retry after a partial UPDATE).
+    /// </summary>
+    public static (int Period, int Current) RollLeadershipPeriod(int period, int current) =>
+        current != 0 ? (current, 0) : (period, 0);
+
+    public static bool CanTransferToMobilizationFlag(bool flagFound, bool hasParentWorld) =>
+        flagFound && hasParentWorld;
+
+    public static bool NeedsInstanceLoad(uint fromInstanceId, uint toInstanceId) =>
+        fromInstanceId != toInstanceId;
+
+    /// <summary>
     /// The Hero activity bonus pays when the term leadership and issued-order counts reach the tier's
     /// thresholds and every Hero-board step of the tier has been completed its required number of times.
     /// </summary>

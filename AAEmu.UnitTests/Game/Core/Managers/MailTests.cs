@@ -213,6 +213,26 @@ public sealed class MailTests
         await Assert.That(_character.Money).IsEqualTo(1000);
     }
 
+    [Test]
+    public async Task Send_ReturnsFalseWhenTheWorldSaveFails()
+    {
+        _saves.FailNext = true;
+        var mail = new BaseMail
+        {
+            MailType = MailType.Normal,
+            Title = "test",
+            ReceiverName = _character.Name
+        };
+        mail.Header.ReceiverId = _character.Id;
+        mail.Header.SenderName = "Sender";
+        mail.Body.Text = "test";
+        mail.Body.RecvDate = DateTime.UtcNow;
+
+        await Assert.That(mail.Send()).IsFalse();
+        await Assert.That(_mailManager._allPlayerMails.Count).IsEqualTo(0);
+        await Assert.That(_saves.SaveCount).IsEqualTo(0);
+    }
+
     private BaseMail SeedInboxMail(long id, MailStatus status = MailStatus.Unread)
     {
         var now = DateTime.UtcNow;

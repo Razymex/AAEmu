@@ -148,4 +148,26 @@ public class DominionClaimRulesTests
         await Assert.That(DominionClaimRules.GetDeclareRefuse(
             false, false, false, false, true, true, false, true)).IsEqualTo(DominionDeclareRefuse.None);
     }
+
+    [Test]
+    public async Task GetDeclareRefuse_GuildIgnoresTheFactionSiegeWindow()
+    {
+        await Assert.That(DominionClaimRules.GetDeclareRefuse(
+            false, false, false, false, true, false, false, true)).IsEqualTo(DominionDeclareRefuse.None);
+        await Assert.That(DominionClaimRules.GetDeclareRefuse(
+            false, true, true, true, false, false, false, true)).IsEqualTo(DominionDeclareRefuse.WindowClosed);
+    }
+
+    [Test]
+    public async Task AfterTaxMail_RestoresThePoolWhenSendFails()
+    {
+        var before = new DominionClaimRules.TaxPool(80000, 40000, 30000, DateTime.UnixEpoch);
+        var settled = DominionClaimRules.SettleTaxPool(before, 100000, new DateTime(2026, 9, 7, 0, 0, 0, DateTimeKind.Utc));
+
+        await Assert.That(settled.House).IsEqualTo(0);
+        await Assert.That(settled.Hunt).IsEqualTo(20000);
+        await Assert.That(settled.Peace).IsEqualTo(30000);
+        await Assert.That(DominionClaimRules.AfterTaxMail(settled, before, true)).IsEqualTo(settled);
+        await Assert.That(DominionClaimRules.AfterTaxMail(settled, before, false)).IsEqualTo(before);
+    }
 }

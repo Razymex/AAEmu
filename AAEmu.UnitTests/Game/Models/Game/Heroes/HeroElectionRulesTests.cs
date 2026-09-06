@@ -25,6 +25,24 @@ public class HeroElectionRulesTests
     }
 
     [Test]
+    public async Task RollLeadershipPeriod_SkipsAlreadyZeroedCurrent()
+    {
+        await Assert.That(HeroElectionRules.RollLeadershipPeriod(0, 1200)).IsEqualTo((1200, 0));
+        await Assert.That(HeroElectionRules.RollLeadershipPeriod(1200, 0)).IsEqualTo((1200, 0));
+        await Assert.That(HeroElectionRules.RollLeadershipPeriod(400, 900)).IsEqualTo((900, 0));
+    }
+
+    [Test]
+    public async Task MobilizationTransfer_RejectsAMissingFlagAndLoadsANewInstance()
+    {
+        await Assert.That(HeroElectionRules.CanTransferToMobilizationFlag(false, false)).IsFalse();
+        await Assert.That(HeroElectionRules.CanTransferToMobilizationFlag(true, false)).IsFalse();
+        await Assert.That(HeroElectionRules.CanTransferToMobilizationFlag(true, true)).IsTrue();
+        await Assert.That(HeroElectionRules.NeedsInstanceLoad(1, 1)).IsFalse();
+        await Assert.That(HeroElectionRules.NeedsInstanceLoad(1, 2)).IsTrue();
+    }
+
+    [Test]
     public async Task CanAcceptMobilizationOrder_WindowAndThresholds()
     {
         var now = new DateTime(2026, 9, 6, 12, 0, 0, DateTimeKind.Utc);
