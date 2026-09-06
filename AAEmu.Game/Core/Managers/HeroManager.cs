@@ -215,9 +215,14 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
 
         using (var findOwnCandidate = connection.CreateCommand())
         {
-            findOwnCandidate.CommandText = "SELECT votes FROM hero_candidates WHERE faction_id=@f AND character_id=@ch AND abstained=0 ORDER BY cycle_id DESC LIMIT 1";
+            var ownSeasonId = currentCycle?.Id ?? (phaseByFaction.TryGetValue(ownFactionId, out var ownPhase) ? ownPhase.SeasonId : 0);
+            findOwnCandidate.CommandText = ownSeasonId == 0
+                ? "SELECT votes FROM hero_candidates WHERE faction_id=@f AND character_id=@ch AND abstained=0 ORDER BY cycle_id DESC LIMIT 1"
+                : "SELECT votes FROM hero_candidates WHERE faction_id=@f AND character_id=@ch AND cycle_id=@c AND abstained=0";
             findOwnCandidate.Parameters.AddWithValue("@f", ownFactionId);
             findOwnCandidate.Parameters.AddWithValue("@ch", character.Id);
+            if (ownSeasonId != 0)
+                findOwnCandidate.Parameters.AddWithValue("@c", ownSeasonId);
             findOwnCandidate.Prepare();
             var ownVotesResult = findOwnCandidate.ExecuteScalar();
             var ownVotes = ownVotesResult != null ? (int)Convert.ToInt64(ownVotesResult) : 0;
@@ -285,10 +290,11 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
                        c.leadership_point, c.accumulated_leadership_point
                 FROM hero_candidates hc
                 JOIN characters c ON c.id = hc.character_id
-                WHERE hc.faction_id=@f AND hc.abstained=0
+                WHERE hc.faction_id=@f AND hc.abstained=0 AND hc.cycle_id=@s
                 ORDER BY hc.votes DESC, hc.leadership_point_at_ranking DESC
                 """;
             select.Parameters.AddWithValue("@f", factionId);
+            select.Parameters.AddWithValue("@s", currentSeasonId);
             select.Prepare();
             using var reader = select.ExecuteReader();
             var ranking = 0;
@@ -840,15 +846,15 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
                 HeroContentConfig.MobilizationAcceptLevel, HeroContentConfig.MobilizationAcceptLeadership))
             return false;
 
-        if (!order.AcceptedCharacterIds.Add(character.Id))
-            return false;
-
-        var flag = character.ParentWorld?.GetDoodad(order.FlagObjId);
+        var flag = FindDoodadAcrossWorlds(order.FlagObjId);
         if (flag == null)
         {
             Logger.Warn("Mobilization order for faction {0}: rally flag {1} is no longer spawned", nationFactionId, order.FlagObjId);
             return false;
         }
+
+        if (!order.AcceptedCharacterIds.Add(character.Id))
+            return false;
 
         var pos = flag.Transform.World.Position;
         character.ForceDismount();
@@ -939,19 +945,34 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             }
         }
 
-        foreach (var candidateId in candidateIds)
+        using (var ballot = connection2.BeginTransaction())
         {
-            using var insertVote = connection2.CreateCommand();
-            insertVote.CommandText = "INSERT INTO hero_votes (cycle_id, faction_id, voter_character_id, candidate_character_id) VALUES (@c,@f,@v,@ch)";
-            insertVote.Parameters.AddWithValue("@c", cycle.Id);
-            insertVote.Parameters.AddWithValue("@f", factionId);
-            insertVote.Parameters.AddWithValue("@v", voter.Id);
-            insertVote.Parameters.AddWithValue("@ch", candidateId);
-            insertVote.Prepare();
-            insertVote.ExecuteNonQuery();
+            try
+            {
+                foreach (var candidateId in candidateIds)
+                {
+                    using var insertVote = connection2.CreateCommand();
+                    insertVote.Transaction = ballot;
+                    insertVote.CommandText = "INSERT INTO hero_votes (cycle_id, faction_id, voter_character_id, candidate_character_id) VALUES (@c,@f,@v,@ch)";
+                    insertVote.Parameters.AddWithValue("@c", cycle.Id);
+                    insertVote.Parameters.AddWithValue("@f", factionId);
+                    insertVote.Parameters.AddWithValue("@v", voter.Id);
+                    insertVote.Parameters.AddWithValue("@ch", candidateId);
+                    insertVote.Prepare();
+                    insertVote.ExecuteNonQuery();
+                }
+
+                RecountVotes(connection2, cycle.Id, factionId, ballot);
+                ballot.Commit();
+            }
+            catch (Exception ex)
+            {
+                ballot.Rollback();
+                Logger.Error(ex, "Vote({0}): ballot persist failed for cycle {1}", voter.Name, cycle.Id);
+                return;
+            }
         }
 
-        RecountVotes(connection2, cycle.Id, factionId);
         Logger.Info("Vote({0}): recorded [{1}] cycle={2} faction={3}", voter.Name, string.Join(",", candidateIds), cycle.Id, factionId);
 
         voter.SendPacket(new SCHeroVotingPacket((int)cycle.Id, 1));
@@ -985,26 +1006,21 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
 
     /// <summary>
     /// Freezes the candidate list for a cycle: per nation, the top <c>hero_candidate_scope</c> characters
-    /// meeting the candidacy thresholds. Idempotent per cycle.
+    /// meeting the candidacy thresholds. Idempotent per faction so a later tick can finish a cycle that
+    /// stopped after the first nation's rows were written.
     /// </summary>
     private void EnsureCandidatesComputed(HeroCycle cycle)
     {
-        using var connection = MySQL.CreateConnection();
-        using (var check = connection.CreateCommand())
-        {
-            check.CommandText = "SELECT COUNT(*) FROM hero_candidates WHERE cycle_id=@cycleId";
-            check.Parameters.AddWithValue("@cycleId", cycle.Id);
-            check.Prepare();
-            if (Convert.ToInt64(check.ExecuteScalar()) > 0)
-                return;
-        }
-
         var condition = HeroGameData.Instance.GetCondition(cycle.HeroConditionId);
         if (condition == null)
             return;
 
+        using var connection = MySQL.CreateConnection();
         foreach (var factionId in HeroGameData.Instance.FactionsWithRewards)
         {
+            if (CountCandidates(connection, cycle.Id, factionId) > 0)
+                continue;
+
             var persisted = new List<(uint characterId, int points)>();
             using (var select = connection.CreateCommand())
             {
@@ -1029,21 +1045,35 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
                 persisted, live, condition.HeroCandidateMinLevel, condition.HeroCandidateMinPoint,
                 condition.HeroCandidateScope);
 
-            foreach (var (characterId, points) in candidates)
+            using (var persist = connection.BeginTransaction())
             {
-                using (var insert = connection.CreateCommand())
+                try
                 {
-                    insert.CommandText = "INSERT INTO hero_candidates (cycle_id, faction_id, character_id, leadership_point_at_ranking) VALUES (@c,@f,@ch,@p)";
-                    insert.Parameters.AddWithValue("@c", cycle.Id);
-                    insert.Parameters.AddWithValue("@f", factionId);
-                    insert.Parameters.AddWithValue("@ch", characterId);
-                    insert.Parameters.AddWithValue("@p", points);
-                    insert.Prepare();
-                    insert.ExecuteNonQuery();
-                }
+                    foreach (var (characterId, points) in candidates)
+                    {
+                        using var insert = connection.CreateCommand();
+                        insert.Transaction = persist;
+                        insert.CommandText = "INSERT INTO hero_candidates (cycle_id, faction_id, character_id, leadership_point_at_ranking) VALUES (@c,@f,@ch,@p)";
+                        insert.Parameters.AddWithValue("@c", cycle.Id);
+                        insert.Parameters.AddWithValue("@f", factionId);
+                        insert.Parameters.AddWithValue("@ch", characterId);
+                        insert.Parameters.AddWithValue("@p", points);
+                        insert.Prepare();
+                        insert.ExecuteNonQuery();
+                    }
 
-                SendCandidateMail(characterId, condition, cycle);
+                    persist.Commit();
+                }
+                catch (Exception ex)
+                {
+                    persist.Rollback();
+                    Logger.Error(ex, "Hero cycle {0} faction {1}: candidate persist failed", cycle.Id, factionId);
+                    continue;
+                }
             }
+
+            foreach (var (characterId, _) in candidates)
+                SendCandidateMail(characterId, condition, cycle);
 
             Logger.Info("Hero cycle {0} faction {1}: {2} candidates", cycle.Id, factionId, candidates.Count);
         }
@@ -1051,24 +1081,19 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
 
     /// <summary>
     /// Seats the heroes for a cycle: candidates ranked by votes take a seat while a <c>hero_rewards</c> row
-    /// exists for their rank, each paid their rank's item set by mail. Idempotent per cycle.
+    /// exists for their rank, each paid their rank's item set by mail. Idempotent per faction so a later
+    /// tick can finish a cycle that stopped after the first nation was seated.
     /// </summary>
     private void EnsureElectionFinalized(HeroCycle cycle)
     {
         using var connection = MySQL.CreateConnection();
-        using (var check = connection.CreateCommand())
-        {
-            check.CommandText = "SELECT COUNT(*) FROM hero_candidates WHERE cycle_id=@c AND elected=1";
-            check.Parameters.AddWithValue("@c", cycle.Id);
-            check.Prepare();
-            if (Convert.ToInt64(check.ExecuteScalar()) > 0)
-                return;
-        }
-
         var condition = HeroGameData.Instance.GetCondition(cycle.HeroConditionId);
 
         foreach (var factionId in HeroGameData.Instance.FactionsWithRewards)
         {
+            if (CountElected(connection, cycle.Id, factionId) > 0)
+                continue;
+
             var ranked = new List<uint>();
             using (var select = connection.CreateCommand())
             {
@@ -1082,42 +1107,68 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             }
 
             var seats = HeroGameData.Instance.SeatsFor(factionId);
-            for (var i = 0; i < ranked.Count; i++)
+            if (ranked.Count == 0 || seats <= 0)
+                continue;
+
+            var seatedIds = new List<uint>();
+            var pendingRewards = new List<(uint CharacterId, HeroReward Reward)>();
+            using (var persist = connection.BeginTransaction())
             {
-                var characterId = ranked[i];
-                var ranking = i + 1;
-                var seated = HeroElectionRules.HoldsSeat(ranking, seats);
-
-                using (var update = connection.CreateCommand())
+                try
                 {
-                    update.CommandText = "UPDATE hero_candidates SET elected=@e WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch";
-                    update.Parameters.AddWithValue("@e", seated);
-                    update.Parameters.AddWithValue("@c", cycle.Id);
-                    update.Parameters.AddWithValue("@f", factionId);
-                    update.Parameters.AddWithValue("@ch", characterId);
-                    update.Prepare();
-                    update.ExecuteNonQuery();
+                    for (var i = 0; i < ranked.Count; i++)
+                    {
+                        var characterId = ranked[i];
+                        var ranking = i + 1;
+                        var seated = HeroElectionRules.HoldsSeat(ranking, seats);
+
+                        using (var update = connection.CreateCommand())
+                        {
+                            update.Transaction = persist;
+                            update.CommandText = "UPDATE hero_candidates SET elected=@e WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch";
+                            update.Parameters.AddWithValue("@e", seated);
+                            update.Parameters.AddWithValue("@c", cycle.Id);
+                            update.Parameters.AddWithValue("@f", factionId);
+                            update.Parameters.AddWithValue("@ch", characterId);
+                            update.Prepare();
+                            update.ExecuteNonQuery();
+                        }
+
+                        if (!seated)
+                            continue;
+
+                        ResetTermCounters(connection, characterId, persist);
+                        seatedIds.Add(characterId);
+                        var reward = HeroGameData.Instance.GetReward(factionId, ranking);
+                        if (reward != null)
+                            pendingRewards.Add((characterId, reward));
+                    }
+
+                    persist.Commit();
                 }
-
-                if (!seated)
+                catch (Exception ex)
+                {
+                    persist.Rollback();
+                    Logger.Error(ex, "Hero cycle {0} faction {1}: finalize persist failed", cycle.Id, factionId);
                     continue;
-
-                ResetTermCounters(connection, characterId);
-                var reward = HeroGameData.Instance.GetReward(factionId, ranking);
-                if (reward != null)
-                    SendRewardMail(characterId, reward, condition, cycle);
+                }
             }
 
-            if (ranked.Count > 0)
-                Logger.Info("Hero cycle {0} faction {1}: seated {2} of {3} ranked candidates", cycle.Id, factionId, Math.Min(seats, ranked.Count), ranked.Count);
+            foreach (var characterId in seatedIds)
+                ApplyTermCountersOnline(characterId);
+            foreach (var (characterId, reward) in pendingRewards)
+                SendRewardMail(characterId, reward, condition, cycle);
+
+            Logger.Info("Hero cycle {0} faction {1}: seated {2} of {3} ranked candidates", cycle.Id, factionId, Math.Min(seats, ranked.Count), ranked.Count);
         }
     }
 
     /// <summary>A new term starts with fresh Mobilization Order and Hero-board bonus counters.</summary>
-    private static void ResetTermCounters(MySqlConnection connection, uint characterId)
+    private static void ResetTermCounters(MySqlConnection connection, uint characterId, MySqlTransaction transaction)
     {
         using (var reset = connection.CreateCommand())
         {
+            reset.Transaction = transaction;
             reset.CommandText = "UPDATE characters SET mobilization_order_today_count=0, mobilization_order_total_count=0 WHERE id=@ch";
             reset.Parameters.AddWithValue("@ch", characterId);
             reset.Prepare();
@@ -1126,12 +1177,16 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
 
         using (var clear = connection.CreateCommand())
         {
+            clear.Transaction = transaction;
             clear.CommandText = "DELETE FROM character_hero_bonus_progress WHERE character_id=@ch";
             clear.Parameters.AddWithValue("@ch", characterId);
             clear.Prepare();
             clear.ExecuteNonQuery();
         }
+    }
 
+    private static void ApplyTermCountersOnline(uint characterId)
+    {
         var online = WorldManager.Instance.GetCharacterById(characterId);
         if (online == null)
             return;
@@ -1149,9 +1204,10 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         return Convert.ToInt64(command.ExecuteScalar()) > 0;
     }
 
-    private static void RecountVotes(MySqlConnection connection, uint cycleId, uint factionId)
+    private static void RecountVotes(MySqlConnection connection, uint cycleId, uint factionId, MySqlTransaction transaction)
     {
         using var update = connection.CreateCommand();
+        update.Transaction = transaction;
         update.CommandText = """
             UPDATE hero_candidates hc
             SET votes = (SELECT COUNT(*) FROM hero_votes hv WHERE hv.cycle_id = hc.cycle_id AND hv.faction_id = hc.faction_id AND hv.candidate_character_id = hc.character_id)
@@ -1161,6 +1217,38 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         update.Parameters.AddWithValue("@f", factionId);
         update.Prepare();
         update.ExecuteNonQuery();
+    }
+
+    private static long CountCandidates(MySqlConnection connection, uint cycleId, uint factionId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM hero_candidates WHERE cycle_id=@c AND faction_id=@f";
+        command.Parameters.AddWithValue("@c", cycleId);
+        command.Parameters.AddWithValue("@f", factionId);
+        command.Prepare();
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    private static long CountElected(MySqlConnection connection, uint cycleId, uint factionId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM hero_candidates WHERE cycle_id=@c AND faction_id=@f AND elected=1";
+        command.Parameters.AddWithValue("@c", cycleId);
+        command.Parameters.AddWithValue("@f", factionId);
+        command.Prepare();
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    private static Doodad FindDoodadAcrossWorlds(uint objId)
+    {
+        foreach (var world in WorldManager.Instance.GetWorlds() ?? [])
+        {
+            var doodad = world.GetDoodad(objId);
+            if (doodad != null)
+                return doodad;
+        }
+
+        return null;
     }
 
     private static void SetAbstained(Character character, uint cycleId, bool abstained)

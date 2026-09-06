@@ -404,9 +404,11 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
             mail.Body.RecvDate = now;
             mail.Send();
 
-            dominion.CurHouseTaxMoney = 0;
-            dominion.CurHuntTaxMoney = 0;
-            dominion.PeaceTaxMoney = 0;
+            var remaining = DominionClaimRules.AfterTaxPayout(
+                dominion.CurHouseTaxMoney, dominion.CurHuntTaxMoney, dominion.PeaceTaxMoney, payable);
+            dominion.CurHouseTaxMoney = (int)remaining.House;
+            dominion.CurHuntTaxMoney = (int)remaining.Hunt;
+            dominion.PeaceTaxMoney = (int)remaining.Peace;
             dominion.LastPaidTime = now;
             PersistTaxPool(dominion);
 
@@ -440,6 +442,14 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
             return;
 
         WorldIntegration.RelayDominionClaimedToZone?.Invoke(rawZoneId, dominion, diagnosticPaddingBytes);
+    }
+
+    internal static void NotifyZoneDominionDeleted(ushort zoneGroupId, uint rawZoneId)
+    {
+        if (!WorldIntegration.ZoneAuthority)
+            return;
+
+        WorldIntegration.RelayDominionDeletedToZone?.Invoke(rawZoneId, zoneGroupId);
     }
 
     /// <summary>
@@ -599,7 +609,8 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
     }
 
     /// <summary>
-    /// Drops a claim and resets the lodestone. Zone is told again on the next reload or a later claim.
+    /// Drops a claim and resets the lodestone. Zone is sent <c>WZDominionDeleted</c> so it does not keep
+    /// the old claim until a reload.
     /// </summary>
     public bool UnclaimTerritory(ushort zoneId)
     {
@@ -607,6 +618,7 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
             return false;
 
         var house = HousingManager.Instance.GetHouseById(dominion.House);
+        var rawZoneId = house?.Transform?.ZoneId ?? 0;
         if (house != null)
         {
             if (_guardTowerSettingIdByZone.TryGetValue(zoneId, out var guardTowerSettingId))
@@ -710,6 +722,7 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
             NonPvPDuration = 0
         };
         WorldManager.Instance.BroadcastPacketToServer(new SCDominionDataPacket(cleared, true, true));
+        NotifyZoneDominionDeleted(zoneId, rawZoneId);
 
         Logger.Info("Dominion zone {0} unclaimed via GM tool (was Expedition {1}, Faction {2})",
             zoneId, dominion.ExpeditionId, dominion.OwningFactionId);

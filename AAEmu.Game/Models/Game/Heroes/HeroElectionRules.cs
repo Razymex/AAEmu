@@ -146,6 +146,19 @@ public static class HeroElectionRules
     }
 
     /// <summary>
+    /// How many candidate ids a voting packet may allocate: the signed count, clipped to the bytes still
+    /// on the wire (each pick is a u64, plus a trailing voter u64). A huge client count cannot grow the
+    /// list past what the packet actually contains.
+    /// </summary>
+    public static int BallotPickCount(int requested, int remainingBytes)
+    {
+        if (requested <= 0 || remainingBytes < sizeof(ulong))
+            return 0;
+        var maxByWire = (remainingBytes - sizeof(ulong)) / sizeof(ulong);
+        return requested < maxByWire ? requested : maxByWire;
+    }
+
+    /// <summary>
     /// Whether a ballot is acceptable: non-empty, no more picks than the faction has seats, and cast by a
     /// character meeting the <c>hero_conditions</c> voter thresholds against the previous period's
     /// leadership (the frozen figure the client also gates on).

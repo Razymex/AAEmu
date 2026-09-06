@@ -305,6 +305,7 @@ public class GuildDominionManager(IExpeditionManager expeditionManager, IGameDat
             return false;
 
         var house = HousingManager.Instance.GetHouseById(dominion.House);
+        var rawZoneId = house?.Transform?.ZoneId ?? 0;
         if (house != null)
         {
             if (_guardTowerSettingIdByZone.TryGetValue(zoneId, out var guardTowerSettingId))
@@ -396,6 +397,7 @@ public class GuildDominionManager(IExpeditionManager expeditionManager, IGameDat
             NonPvPDuration = 0
         };
         WorldManager.Instance.BroadcastPacketToServer(new SCDominionDataPacket(cleared, true, true));
+        DominionManager.NotifyZoneDominionDeleted(zoneId, rawZoneId);
 
         Logger.Info("Guild dominion zone {0} unclaimed via GM tool (was Expedition {1})", zoneId, dominion.ExpeditionId);
         return true;

@@ -1223,6 +1223,21 @@ public static class Program
             zone?.SendPacket(packet);
             Logger.Info("WZDominionData → zone group={0} expedition={1} rawZoneId={2} bytes={3} padding={4}", dominion.ZoneId, dominion.ExpeditionId, rawZoneId, encodedLength, diagnosticPaddingBytes);
         };
+        WorldIntegration.RelayDominionDeletedToZone = (rawZoneId, zoneGroupId) =>
+        {
+            var packet = new WZDominionDeletedPacket(zoneGroupId);
+            if (rawZoneId != 0)
+            {
+                var zone = PlayerEnterService.ForZoneId(rawZoneId)
+                           ?? (Environment.GetEnvironmentVariable("AAEMU_ZONE_PRIMARY_FALLBACK") == "1"
+                               ? PlayerEnterService.PrimaryZone() ?? PlayerEnterService.AnyJoinedZone() : null);
+                zone?.SendPacket(packet);
+                return;
+            }
+
+            foreach (var zone in PlayerEnterService.AllLoadedZones())
+                zone.SendPacket(packet);
+        };
         WorldIntegration.RelayGimmickCreatedToZone = (data, ownerZoneId) =>
         {
             var zone = ownerZoneId >= 0 ? ZoneSession.Instance.GetJoinedByZoneId((uint)ownerZoneId) : null;
@@ -1424,6 +1439,7 @@ public static class Program
             WorldIntegration.RelayHouseBuildProgressToZone = null;
             WorldIntegration.RelayHouseBuildDoneToZone = null;
             WorldIntegration.RelayDominionClaimedToZone = null;
+            WorldIntegration.RelayDominionDeletedToZone = null;
             WorldIntegration.GetZoneSpawnerPlacements = null;
             WorldIntegration.RelayGimmickCreatedToZone = null;
             WorldIntegration.RelayGimmickRemovedToZone = null;

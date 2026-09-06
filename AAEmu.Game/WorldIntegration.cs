@@ -443,6 +443,11 @@ public static class WorldIntegration
     public static Action<uint, DominionData, int> RelayDominionClaimedToZone { get; set; }
 
     /// <summary>
+    /// WZDominionDeleted. Args: zone key (0 = every joined dedicate), then the zone-group id on the claim.
+    /// </summary>
+    public static Action<uint, uint> RelayDominionDeletedToZone { get; set; }
+
+    /// <summary>
     /// Fires on Zone (re)connect (ZwOpcodes.ZoneLoaded). DominionManager re-sends any claim the zone owns
     /// and re-announces its territory agent, like NotifyZoneReadyForHousing. Zones reload independently of
     /// World and keep no claim state, so this is what lets a claim survive a zone restart.

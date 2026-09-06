@@ -68,6 +68,23 @@ public class DominionClaimRulesTests
     }
 
     [Test]
+    public async Task AfterTaxPayout_KeepsTheUnpaidRemainder()
+    {
+        var capped = DominionClaimRules.AfterTaxPayout(250000, 0, 0, 200000);
+        await Assert.That(capped.House).IsEqualTo(50000);
+        await Assert.That(capped.Hunt).IsEqualTo(0);
+        await Assert.That(capped.Peace).IsEqualTo(0);
+
+        var mixed = DominionClaimRules.AfterTaxPayout(80000, 40000, 30000, 100000);
+        await Assert.That(mixed.House).IsEqualTo(0);
+        await Assert.That(mixed.Hunt).IsEqualTo(20000);
+        await Assert.That(mixed.Peace).IsEqualTo(30000);
+
+        var full = DominionClaimRules.AfterTaxPayout(100, 20, 5, 125);
+        await Assert.That(full.House + full.Hunt + full.Peace).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task TaxDue_IsZeroUntilTheSiegeWeekRollsThenAppliesTheCap()
     {
         var week = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);

@@ -63,6 +63,28 @@ public static class DominionClaimRules
     }
 
     /// <summary>
+    /// House / hunt / peace left after mailing <paramref name="payable"/>. Drains house, then hunt, then
+    /// peace. A cap must not wipe the unpaid remainder.
+    /// </summary>
+    public static (long House, long Hunt, long Peace) AfterTaxPayout(long house, long hunt, long peace, long payable)
+    {
+        var left = payable < 0 ? 0 : payable;
+        house = DrainTaxBucket(house, ref left);
+        hunt = DrainTaxBucket(hunt, ref left);
+        peace = DrainTaxBucket(peace, ref left);
+        return (house, hunt, peace);
+    }
+
+    private static long DrainTaxBucket(long amount, ref long payable)
+    {
+        if (amount <= 0 || payable <= 0)
+            return amount < 0 ? 0 : amount;
+        var take = amount < payable ? amount : payable;
+        payable -= take;
+        return amount - take;
+    }
+
+    /// <summary>
     /// Weekly mail amount: 0 when the siege week has not rolled, otherwise the capped pool.
     /// </summary>
     public static long TaxDue(DateTime lastPaidUtc, DateTime? currentWeekStartUtc, long pool, long? limit) =>

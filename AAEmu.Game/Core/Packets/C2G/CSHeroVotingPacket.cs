@@ -1,6 +1,7 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game.Heroes;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -12,8 +13,8 @@ public class CSHeroVotingPacket() : GamePacket(CSOffsets.CSHeroVotingPacket, 1)
 
     public override void Read(PacketStream stream)
     {
-        var count = stream.ReadInt32();
-        CandidateCharacterIds = new List<ulong>(Math.Max(count, 0));
+        var count = HeroElectionRules.BallotPickCount(stream.ReadInt32(), stream.LeftBytes);
+        CandidateCharacterIds = new List<ulong>(count);
         for (var i = 0; i < count; i++)
             CandidateCharacterIds.Add(stream.ReadUInt64());
         VoterCharacterId = stream.ReadUInt64();

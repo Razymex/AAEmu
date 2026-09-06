@@ -84,6 +84,16 @@ public class HeroElectionRulesTests
     }
 
     [Test]
+    public async Task BallotPickCount_ClipsToRemainingWireNotTheClientCount()
+    {
+        const int twoPicksAndVoter = sizeof(ulong) * 3;
+        await Assert.That(HeroElectionRules.BallotPickCount(1_000_000, twoPicksAndVoter)).IsEqualTo(2);
+        await Assert.That(HeroElectionRules.BallotPickCount(1, twoPicksAndVoter)).IsEqualTo(1);
+        await Assert.That(HeroElectionRules.BallotPickCount(-3, twoPicksAndVoter)).IsEqualTo(0);
+        await Assert.That(HeroElectionRules.BallotPickCount(2, sizeof(ulong))).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task PairBonusesWithGrades_HighestGradeGetsRichestTier()
     {
         var rewards = new[]
