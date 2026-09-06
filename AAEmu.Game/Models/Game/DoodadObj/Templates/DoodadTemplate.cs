@@ -18,6 +18,12 @@ public class DoodadTemplate
     public string Model { get; set; } = "";
     /// <summary>When true, Zone pulls mesh from world/level instead of packet modelId.</summary>
     public bool LoadModelFromWorld { get; set; }
+
+    /// <summary>
+    /// doodad_almighties.system_doodad: a permanent world fixture (faction statues, monuments). A bare
+    /// "stay on this phase" use never consumes it, and its phase progress is kept across restarts.
+    /// </summary>
+    public bool SystemDoodad { get; set; }
     public bool UseCreatorFaction { get; set; }
     public bool ForceTodTopPriority { get; set; }
     public uint MilestoneId { get; set; }

@@ -27,6 +27,12 @@ public class BaseMail
     public bool IsDelivered { get; set; }
     public bool IsDirty { get => _isDirty; set => _isDirty = value; }
 
+    /// <summary>
+    /// Staged on a caller transaction that has not committed. Mailbox list, claim, and
+    /// the world save must ignore it until <see cref="MailManager.PublishDelivered"/>.
+    /// </summary>
+    public bool IsPendingPublish { get; set; }
+
     public BaseMail()
     {
         Header = new MailHeader(this);
@@ -36,9 +42,7 @@ public class BaseMail
 
     public bool Send()
     {
-        // Update Attachments just in case somebody did manual editing
-        Header.Attachments = GetTotalAttachmentCount();
-        RenumberSlots();
+        MailDeliveryRules.PrepareAttachments(this);
         return MailManager.Instance.Send(this);
     }
 
@@ -107,12 +111,5 @@ public class BaseMail
         Header.Attachments = GetTotalAttachmentCount();
     }
 
-    protected void RenumberSlots()
-    {
-        for (var i = 0; i < Body.Attachments.Count; i++)
-        {
-            Body.Attachments[i].SlotType = SlotType.Mail;
-            Body.Attachments[i].Slot = i;
-        }
-    }
+    protected void RenumberSlots() => MailDeliveryRules.PrepareAttachments(this);
 }

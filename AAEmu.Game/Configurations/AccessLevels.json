@@ -76,6 +76,7 @@
         "useskill": 100,
         "wipeauctionhouse": 100,
         "zonestate": 100,
+        "zonetp": 100,
         
         // Disabled
         "testtransfer": 999

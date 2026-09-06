@@ -1,5 +1,6 @@
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils;
+using AAEmu.Game.Models.StaticValues;
 
 namespace AAEmu.Game.Models.Game;
 
@@ -7,6 +8,18 @@ public class DominionData : PacketMarshaler
 {
     public ushort ZoneId { get; set; }
     public uint ExpeditionId { get; set; }
+
+    /// <summary>
+    /// Persisted nation ownership for a siege_zones territory. Zero on a guild-owned claim, where
+    /// <see cref="ExpeditionId"/> is the owner. Not written on the wire.
+    /// </summary>
+    public uint OwningFactionId { get; set; }
+
+    /// <summary>
+    /// Alliance faction written after ZoneId. The territory UI compares this to the viewer's top-level
+    /// faction. Guild id stays on <see cref="ExpeditionId"/>.
+    /// </summary>
+    public FactionsEnum FactionId { get; set; }
     public uint House { get; set; } // TODO id?
     public int TaxRate { get; set; }
     public float X { get; set; }
@@ -21,48 +34,61 @@ public class DominionData : PacketMarshaler
     public DateTime LastSiegeEndTime { get; set; }
     public DateTime ReignStartTime { get; set; }
     public DateTime LastTaxRateChangedTime { get; set; } // TODO in struct long
-    public DateTime LastNationalTaxRateChagedTime { get; set; } // TODO in struct long
-    public ushort NationalTaxRate { get; set; }
-    public long NationalMonumentDbId { get; set; }
-    public float NationalMonumentX { get; set; }
-    public float NationalMonumentY { get; set; }
-    public float NationalMonumentZ { get; set; }
     public uint ObjId { get; set; }
     public DominionTerritoryData TerritoryData { get; set; }
     public DominionSiegeTimers SiegeTimers { get; set; } // TODO mb not correct namings
     public DateTime NonPvPStart { get; set; }
     public ushort NonPvPDuration { get; set; }
 
+    /// <summary>Trailing bytes the dedicate reader still consumes after the last named field.</summary>
+    public const int RequiredPaddingBytes = 36;
+
     public override PacketStream Write(PacketStream stream)
     {
         stream.Write(ZoneId);
-        stream.Write(ExpeditionId);
+        stream.Write((uint)FactionId);
         stream.Write(House);
         stream.Write(TaxRate);
         stream.Write(Helpers.ConvertLongX(X));
         stream.Write(Helpers.ConvertLongY(Y));
         stream.Write(Z);
-        stream.Write(CurHouseTaxMoney);
-        stream.Write(CurHuntTaxMoney);
-        stream.Write(PeaceTaxMoney);
-        stream.Write(CurHouseTaxAaPoint);
-        stream.Write(PeaceTaxAaPoint);
-        stream.Write(LastPaidTime);
-        stream.Write(LastSiegeEndTime);
-        stream.Write(ReignStartTime);
-        stream.Write(LastTaxRateChangedTime);
-        stream.Write(LastNationalTaxRateChagedTime);
-        stream.Write(NationalTaxRate);
-        stream.Write(NationalMonumentDbId);
-        stream.Write(Helpers.ConvertLongX(NationalMonumentX));
-        stream.Write(Helpers.ConvertLongY(NationalMonumentY));
-        stream.Write(NationalMonumentZ);
-        stream.WriteBc(ObjId);
-        stream.Write(TerritoryData);
-        stream.Write(SiegeTimers);
-        stream.Write(NonPvPStart);
+        stream.Write((long)CurHouseTaxMoney);
+        stream.Write((long)CurHuntTaxMoney);
+        stream.Write((long)PeaceTaxMoney);
+        stream.Write((long)CurHouseTaxAaPoint);
+        stream.Write((long)PeaceTaxAaPoint);
+        stream.Write((ulong)Helpers.UnixTime(LastPaidTime));
+        stream.Write((ulong)Helpers.UnixTime(LastSiegeEndTime));
+        stream.Write((ulong)Helpers.UnixTime(ReignStartTime));
+        stream.Write((ulong)Helpers.UnixTime(LastTaxRateChangedTime));
+        stream.Write(0);
+        stream.WriteBc(0u);
+        stream.Write(TerritoryData ?? new DominionTerritoryData());
+        stream.Write(SiegeTimers?.SiegePeriod ?? (byte)0);
+        WriteEmptyRosterRecord(stream);
+        stream.Write(0u);
+        stream.Write(false);
+        stream.Write((ulong)Helpers.UnixTime(NonPvPStart));
         stream.Write(NonPvPDuration);
+
+        for (var i = 0; i < RequiredPaddingBytes; i++)
+            stream.Write((byte)0);
+
         return stream;
+    }
+
+    private static void WriteEmptyRosterRecord(PacketStream stream)
+    {
+        stream.Write(0u);      // unnamed leading 4-byte field
+        stream.WriteBc(0u);    // id
+        stream.Write(0L);      // Point.x
+        stream.Write(0L);      // Point.y
+        stream.Write(0f);      // Point.z
+        stream.Write((byte)0); // Limit-array: limit
+        stream.Write((byte)0); // Limit-array: count (0 entries)
+        stream.Write((byte)0); // 32-byte-sub-record array: count (0 entries)
+        stream.Write(0u);      // teamId
+        stream.Write(0);       // scorePoint
     }
 }
 

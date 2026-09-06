@@ -153,6 +153,14 @@ public class DoodadSpawner : Spawner<Doodad>
         RespawnDoodadTemplateId = 0; // reset it after 1 spawn
 
         var overridePhase = FuncGroupId != 0;
+        var template = DoodadManager.Instance.GetTemplate(newUnitId);
+        // A system doodad (permanent world fixture) resumes the phase it had reached before the restart.
+        var saved = template is { SystemDoodad: true }
+            ? WorldDoodadPhaseStore.Load(newUnitId, new System.Numerics.Vector3(Position.X, Position.Y, Position.Z))
+            : null;
+        if (saved.HasValue)
+            overridePhase = true;
+
         var doodad = DoodadManager.Instance.Create(ParentWorld, objId, newUnitId, null, overridePhase);
         if (doodad == null)
         {
@@ -160,10 +168,17 @@ public class DoodadSpawner : Spawner<Doodad>
             return null;
         }
 
-        if (overridePhase)
-            doodad.FuncGroupId = FuncGroupId;
-
         doodad.Spawner = this;
+        if (saved.HasValue)
+        {
+            doodad.FuncGroupId = saved.Value.FuncGroupId;
+            doodad.Data = saved.Value.Data;
+        }
+        else if (overridePhase)
+        {
+            doodad.FuncGroupId = FuncGroupId;
+        }
+
         doodad.Transform.ApplyWorldSpawnPosition(Position);
         // TODO for test
         doodad.PlantTime = DateTime.UtcNow;

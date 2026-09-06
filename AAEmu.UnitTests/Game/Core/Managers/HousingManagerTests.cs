@@ -25,6 +25,8 @@ public class HousingManagerTests
         var mockZone = Mock.Of<IZoneManager>();
         var mockDoodad = Mock.Of<IDoodadManager>();
         var mockUcc = Mock.Of<IUccManager>();
+        var mockDominion = Mock.Of<IDominionManager>();
+        var mockGuildDominion = Mock.Of<IGuildDominionManager>();
 
         var manager = new HousingManager(
             mockObjectId.Object,
@@ -40,7 +42,9 @@ public class HousingManagerTests
             mockName.Object,
             mockZone.Object,
             mockDoodad.Object,
-            mockUcc.Object);
+            mockUcc.Object,
+            mockDominion.Object,
+            mockGuildDominion.Object);
 
         await Assert.That(manager).IsNotNull();
         Mock.VerifyNoOtherCalls(mockObjectId);
@@ -57,5 +61,7 @@ public class HousingManagerTests
         Mock.VerifyNoOtherCalls(mockZone);
         Mock.VerifyNoOtherCalls(mockDoodad);
         Mock.VerifyNoOtherCalls(mockUcc);
+        Mock.VerifyNoOtherCalls(mockDominion);
+        Mock.VerifyNoOtherCalls(mockGuildDominion);
     }
 }

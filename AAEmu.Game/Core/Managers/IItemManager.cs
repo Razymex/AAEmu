@@ -64,4 +64,5 @@ public interface IItemManager : ILoadable
     ItemSet GetItemSet(uint itemSetId);
     SlotType GetContainerSlotTypeByContainerId(ulong dbId);
     (int, int, int) Save(MySql.Data.MySqlClient.MySqlConnection connection, MySql.Data.MySqlClient.MySqlTransaction transaction);
+    int PersistMailAttachments(IReadOnlyCollection<Item> items, MySql.Data.MySqlClient.MySqlConnection connection, MySql.Data.MySqlClient.MySqlTransaction transaction);
 }

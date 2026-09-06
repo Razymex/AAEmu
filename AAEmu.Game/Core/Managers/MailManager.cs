@@ -24,6 +24,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public Dictionary<long, BaseMail> _allPlayerMails = [];
     public Dictionary<long, BaseMail> AllPlayerMails => _allPlayerMails;
+    private readonly Dictionary<long, BaseMail> _pendingMails = [];
     private List<long> _deletedMailIds = [];
     // Unused: private object _lock = new();
 
@@ -37,10 +38,9 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public BaseMail GetMailById(long id)
     {
-        if (_allPlayerMails.TryGetValue(id, out var theMail))
+        if (_allPlayerMails.TryGetValue(id, out var theMail) && MailDeliveryRules.IsPublished(theMail))
             return theMail;
-        else
-            return null;
+        return null;
     }
 
     public uint GetNewMailId()
@@ -56,39 +56,171 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public bool Send(BaseMail mail)
     {
-        // Verify Receiver
-        var targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
-        var targetId = nameManager.GetCharacterId(mail.Header.ReceiverName);
-        if (!string.Equals(targetName, mail.Header.ReceiverName, StringComparison.InvariantCultureIgnoreCase))
+        if (!TryEnqueue(mail, out _))
+            return false;
+        if (EnsurePersisted() != WorldSaveStatus.Failed)
+            return true;
+
+        DiscardUnpersisted(mail);
+        return false;
+    }
+
+    /// <summary>
+    /// Enqueues the letter and writes it on the caller's transaction so a claim/settlement
+    /// marker cannot commit without the mail row.
+    /// </summary>
+    public bool TryDeliverOn(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (mail == null || connection == null || transaction == null)
+            return false;
+
+        if (!TryStageDelivery(mail, out _))
+            return false;
+
+        try
         {
-            Logger.Debug("Send() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
-            return false; // Name mismatch
+            // Hold attachments off the periodic world save until PublishDelivered.
+            MailDeliveryRules.HoldAttachmentsFromWorldSave(mail, true);
+            MailDeliveryRules.PrepareAttachments(mail);
+            WriteMail(mail, connection, transaction);
+            PersistMailAttachments(mail, connection, transaction);
+            return true;
         }
-        if (targetId != mail.Header.ReceiverId)
+        catch (Exception ex)
         {
-            Logger.Debug("Send() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
-            return false; // Id mismatch
+            Logger.Error(ex, "TryDeliverOn failed for mail {0}", mail.Id);
+            DiscardUnpersisted(mail);
+            return false;
+        }
+    }
+
+    private void PersistMailAttachments(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (mail.Body.Attachments.Count == 0)
+            return;
+
+        foreach (var item in mail.Body.Attachments)
+        {
+            if (!MailDeliveryRules.CanPersistAttachment(item))
+                throw new GameException($"Mail {mail.Id} attachment {item?.Id} is not owned by a mail slot");
         }
 
-        // Assign a Id if we didn't have one yet
-        if (mail.Id <= 0)
+        var written = itemManager.PersistMailAttachments(mail.Body.Attachments, connection, transaction);
+        if (written != mail.Body.Attachments.Count)
+            throw new GameException($"Mail {mail.Id} persisted {written}/{mail.Body.Attachments.Count} attachments");
+    }
+
+    public void DiscardUnpersisted(BaseMail mail)
+    {
+        if (mail == null)
+            return;
+        lock (_pendingMails)
+            _pendingMails.Remove(mail.Id);
+        lock (_allPlayerMails)
+            _allPlayerMails.Remove(mail.Id);
+        foreach (var item in mail.Body.Attachments)
         {
-            Logger.Trace("Send() - Assign new mail Id");
-            mail.Id = GetNewMailId();
+            if (item?.Id > 0)
+                itemManager.ReleaseId(item.Id);
         }
+        mail.Body.Attachments.Clear();
+        mail.IsPendingPublish = false;
+        mail.IsDirty = true;
+    }
+
+    /// <summary>
+    /// Assigns an id and holds the letter off the mailbox until <see cref="PublishDelivered"/>.
+    /// </summary>
+    public bool TryStageDelivery(BaseMail mail, out string targetName)
+    {
+        if (!TryAssignDelivery(mail, out targetName))
+            return false;
+
+        mail.IsPendingPublish = true;
+        lock (_pendingMails)
+        lock (_allPlayerMails)
+        {
+            if (_pendingMails.ContainsKey(mail.Id) || _allPlayerMails.ContainsKey(mail.Id))
+            {
+                Logger.Error("TryStageDelivery() - Refusing to replace existing mail {0}", mail.Id);
+                mail.IsPendingPublish = false;
+                return false;
+            }
+
+            _pendingMails.Add(mail.Id, mail);
+        }
+
+        return true;
+    }
+
+    public void PublishDelivered(BaseMail mail)
+    {
+        if (mail == null)
+            return;
+
+        string receiverName;
+        lock (_pendingMails)
+            _pendingMails.Remove(mail.Id);
+
+        mail.IsPendingPublish = false;
+        MailDeliveryRules.HoldAttachmentsFromWorldSave(mail, false);
+        _allPlayerMails ??= [];
+        lock (_allPlayerMails)
+        {
+            _allPlayerMails[mail.Id] = mail;
+        }
+
+        receiverName = nameManager.GetCharacterName(mail.Header.ReceiverId) ?? mail.Header.ReceiverName;
+        try
+        {
+            NotifyNewMailByNameIfOnline(mail, receiverName);
+        }
+        catch (Exception ex)
+        {
+            // The letter is already published and the caller already committed.
+            // Do not throw: callers must not treat this as a delivery rollback.
+            Logger.Error(ex, "PublishDelivered notify failed for mail {0}", mail.Id);
+        }
+    }
+
+    private bool TryEnqueue(BaseMail mail, out string targetName)
+    {
+        if (!TryAssignDelivery(mail, out targetName))
+            return false;
+
         _allPlayerMails ??= [];
         lock (_allPlayerMails)
         {
             if (_allPlayerMails.ContainsKey(mail.Id))
             {
-                Logger.Error("Send() - Refusing to replace existing mail {0}", mail.Id);
+                Logger.Error("TryEnqueue() - Refusing to replace existing mail {0}", mail.Id);
                 return false;
             }
 
+            mail.IsPendingPublish = false;
             _allPlayerMails.Add(mail.Id, mail);
         }
         NotifyNewMailByNameIfOnline(mail, targetName);
-        PersistNow();
+        return true;
+    }
+
+    private bool TryAssignDelivery(BaseMail mail, out string targetName)
+    {
+        targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
+        var targetId = nameManager.GetCharacterId(mail.Header.ReceiverName);
+        if (!string.Equals(targetName, mail.Header.ReceiverName, StringComparison.InvariantCultureIgnoreCase))
+        {
+            Logger.Debug("TryAssignDelivery() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
+            return false;
+        }
+        if (targetId != mail.Header.ReceiverId)
+        {
+            Logger.Debug("TryAssignDelivery() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
+            return false;
+        }
+
+        if (mail.Id <= 0)
+            mail.Id = GetNewMailId();
         return true;
     }
 
@@ -343,61 +475,64 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
         foreach (var mtbs in _allPlayerMails)
         {
-            if (!mtbs.Value.IsDirty)
+            if (!mtbs.Value.IsDirty || !MailDeliveryRules.IsPublished(mtbs.Value))
                 continue;
-            using (var command = connection.CreateCommand())
-            {
-                command.Connection = connection;
-                command.Transaction = transaction;
-                command.CommandText = "REPLACE INTO mails(" +
-                    "`id`,`type`,`status`,`title`,`text`,`sender_id`,`sender_name`," +
-                    "`attachment_count`,`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`," +
-                    "`returned`,`extra`,`money_amount_1`,`money_amount_2`,`money_amount_3`," +
-                    "`attachment0`,`attachment1`,`attachment2`,`attachment3`,`attachment4`,`attachment5`," +
-                    "`attachment6`,`attachment7`,`attachment8`,`attachment9`" +
-                    ") VALUES (" +
-                    "@id, @type, @status, @title, @text, @senderId, @senderName, " +
-                    "@attachment_count, @receiverId, @receiverName, @openDate, @sendDate, @receivedDate, " +
-                    "@returned, @extra, @money1, @money2, @money3," +
-                    "@attachment0, @attachment1, @attachment2, @attachment3, @attachment4, @attachment5, " +
-                    "@attachment6, @attachment7, @attachment8, @attachment9" +
-                    ")";
-
-                command.Parameters.AddWithValue("@id", mtbs.Value.Id);
-                command.Parameters.AddWithValue("@openDate", mtbs.Value.Header.OpenDate);
-                command.Parameters.AddWithValue("@type", (byte)mtbs.Value.Header.Type);
-                command.Parameters.AddWithValue("@status", mtbs.Value.Header.Status);
-                command.Parameters.AddWithValue("@title", mtbs.Value.Header.Title);
-                command.Parameters.AddWithValue("@text", mtbs.Value.Body.Text);
-                command.Parameters.AddWithValue("@senderId", mtbs.Value.Header.SenderId);
-                command.Parameters.AddWithValue("@senderName", mtbs.Value.Header.SenderName);
-                command.Parameters.AddWithValue("@attachment_count", mtbs.Value.Header.Attachments);
-                command.Parameters.AddWithValue("@receiverId", mtbs.Value.Header.ReceiverId);
-                command.Parameters.AddWithValue("@receiverName", mtbs.Value.Header.ReceiverName);
-                command.Parameters.AddWithValue("@sendDate", mtbs.Value.Body.SendDate);
-                command.Parameters.AddWithValue("@receivedDate", mtbs.Value.Body.RecvDate);
-                command.Parameters.AddWithValue("@returned", mtbs.Value.Header.Returned ? 1 : 0);
-                command.Parameters.AddWithValue("@extra", mtbs.Value.Header.Extra);
-                command.Parameters.AddWithValue("@money1", mtbs.Value.Body.CopperCoins);
-                command.Parameters.AddWithValue("@money2", mtbs.Value.Body.BillingAmount);
-                command.Parameters.AddWithValue("@money3", mtbs.Value.Body.MoneyAmount2);
-
-                for (var i = 0; i < MailBody.MaxMailAttachments; i++)
-                {
-                    if (i >= mtbs.Value.Body.Attachments.Count)
-                        command.Parameters.AddWithValue("@attachment" + i.ToString(), 0);
-                    else
-                        command.Parameters.AddWithValue("@attachment" + i.ToString(), mtbs.Value.Body.Attachments[i].Id);
-                }
-
-                command.Prepare();
-                command.ExecuteNonQuery();
-                updatedCount++;
-                mtbs.Value.IsDirty = false;
-            }
+            WriteMail(mtbs.Value, connection, transaction);
+            updatedCount++;
         }
 
         return (updatedCount, deletedCount);
+    }
+
+    private static void WriteMail(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Connection = connection;
+        command.Transaction = transaction;
+        command.CommandText = "REPLACE INTO mails(" +
+            "`id`,`type`,`status`,`title`,`text`,`sender_id`,`sender_name`," +
+            "`attachment_count`,`receiver_id`,`receiver_name`,`open_date`,`send_date`,`received_date`," +
+            "`returned`,`extra`,`money_amount_1`,`money_amount_2`,`money_amount_3`," +
+            "`attachment0`,`attachment1`,`attachment2`,`attachment3`,`attachment4`,`attachment5`," +
+            "`attachment6`,`attachment7`,`attachment8`,`attachment9`" +
+            ") VALUES (" +
+            "@id, @type, @status, @title, @text, @senderId, @senderName, " +
+            "@attachment_count, @receiverId, @receiverName, @openDate, @sendDate, @receivedDate, " +
+            "@returned, @extra, @money1, @money2, @money3," +
+            "@attachment0, @attachment1, @attachment2, @attachment3, @attachment4, @attachment5, " +
+            "@attachment6, @attachment7, @attachment8, @attachment9" +
+            ")";
+
+        command.Parameters.AddWithValue("@id", mail.Id);
+        command.Parameters.AddWithValue("@openDate", mail.Header.OpenDate);
+        command.Parameters.AddWithValue("@type", (byte)mail.Header.Type);
+        command.Parameters.AddWithValue("@status", mail.Header.Status);
+        command.Parameters.AddWithValue("@title", mail.Header.Title);
+        command.Parameters.AddWithValue("@text", mail.Body.Text);
+        command.Parameters.AddWithValue("@senderId", mail.Header.SenderId);
+        command.Parameters.AddWithValue("@senderName", mail.Header.SenderName);
+        command.Parameters.AddWithValue("@attachment_count", mail.Header.Attachments);
+        command.Parameters.AddWithValue("@receiverId", mail.Header.ReceiverId);
+        command.Parameters.AddWithValue("@receiverName", mail.Header.ReceiverName);
+        command.Parameters.AddWithValue("@sendDate", mail.Body.SendDate);
+        command.Parameters.AddWithValue("@receivedDate", mail.Body.RecvDate);
+        command.Parameters.AddWithValue("@returned", mail.Header.Returned ? 1 : 0);
+        command.Parameters.AddWithValue("@extra", mail.Header.Extra);
+        command.Parameters.AddWithValue("@money1", mail.Body.CopperCoins);
+        command.Parameters.AddWithValue("@money2", mail.Body.BillingAmount);
+        command.Parameters.AddWithValue("@money3", mail.Body.MoneyAmount2);
+
+        for (var i = 0; i < MailBody.MaxMailAttachments; i++)
+        {
+            if (i >= mail.Body.Attachments.Count)
+                command.Parameters.AddWithValue("@attachment" + i.ToString(), 0);
+            else
+                command.Parameters.AddWithValue("@attachment" + i.ToString(), mail.Body.Attachments[i].Id);
+        }
+
+        command.Prepare();
+        command.ExecuteNonQuery();
+        mail.IsDirty = false;
     }
 
     [ThreadStatic] private static int t_persistDeferDepth;
@@ -428,27 +563,31 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     /// then reloaded the pre-claim row and the letter came back unclaimed.
     /// No-ops in tests that do not register <see cref="ISaveManager"/>.
     /// </summary>
-    public void PersistNow()
+    public void PersistNow() => _ = EnsurePersisted();
+
+    private WorldSaveStatus EnsurePersisted()
     {
         if (t_persistDeferDepth > 0)
         {
             t_persistRequested = true;
-            return;
+            return WorldSaveStatus.Saved;
         }
 
-        FlushPersist();
+        return FlushPersist();
     }
 
-    private void FlushPersist()
+    private WorldSaveStatus FlushPersist()
     {
         var saver = SingletonContainer.ServiceProvider?.GetService<ISaveManager>();
         if (saver == null)
-            return;
+            return WorldSaveStatus.Saved;
 
         // A save that is already running took the gate after this operation released it, so
         // it carries everything the operation wrote. Nothing is lost by not saving twice.
-        if (!saver.DoSave())
+        var status = saver.TrySave();
+        if (status == WorldSaveStatus.Busy)
             Logger.Debug("Mail persist folded into the save already in progress");
+        return status;
     }
 
     private sealed class PersistScope(MailManager owner) : IDisposable
@@ -484,7 +623,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         // Try to grab the actual online Character object to send live updates
         var character = worldManager.GetCharacterById(characterId);
         var tempMails = _allPlayerMails.Where(
-            x => x.Value.Body.RecvDate <= DateTime.UtcNow &&
+            x => MailDeliveryRules.IsPublished(x.Value) &&
+                 x.Value.Body.RecvDate <= DateTime.UtcNow &&
                  (x.Value.Header.ReceiverId == characterId || 
                   x.Value.Header.SenderId == characterId)
                  ).

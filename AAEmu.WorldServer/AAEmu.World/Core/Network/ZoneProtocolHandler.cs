@@ -143,6 +143,7 @@ public class ZoneProtocolHandler : BaseProtocolHandler
                 WorldIntegration.NotifyZoneReadyForDoodads?.Invoke(connection.ZoneId, connection.InstanceId);
                 WorldIntegration.NotifyZoneReadyForHousing?.Invoke(connection.ZoneId, connection.InstanceId);
                 WorldIntegration.NotifyZoneReadyForGimmicks?.Invoke(connection.ZoneId, connection.InstanceId);
+                WorldIntegration.NotifyZoneReadyForDominion?.Invoke(connection.ZoneId);
                 // schedule-linked spawners stay held back until the period next reopens.
                 GameScheduleRelay.OnZoneLoaded(connection);
                 TowerDefScheduler.OnZoneLoaded(connection);

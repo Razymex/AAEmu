@@ -8,4 +8,17 @@ public interface ISaveManager : IInitializable
     System.Threading.Tasks.Task StopAsync();
     void SaveTickStart();
     bool DoSave();
+
+    /// <summary>
+    /// Same snapshot as <see cref="DoSave"/>, but <see cref="WorldSaveStatus.Busy"/> is not a
+    /// failure — another save already holds the caller's state.
+    /// </summary>
+    WorldSaveStatus TrySave();
+}
+
+public enum WorldSaveStatus
+{
+    Saved = 0,
+    Busy,
+    Failed
 }

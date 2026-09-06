@@ -22,6 +22,11 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
     private List<ItemHousingDecoration> _housingItemHousingDecorations = [];
     private List<HousingItemHousings> _housingItemHousings = [];
     private Dictionary<uint, HousingTemplate> _housingTemplates = [];
+    /// <summary>
+    /// <c>dominion_housings.housing_id</c> — the unique territory buildings (farm, workshop, warehouse,
+    /// supervision post, altar, and their grade-2 rows). The client only loads this table.
+    /// </summary>
+    private HashSet<uint> _dominionHousingTemplateIds = [];
 
     public void Load(SqliteConnection connection)
     {
@@ -64,6 +69,23 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
                     if (!_groupCategories.TryGetValue(group, out var categories))
                         _groupCategories[group] = categories = [];
                     categories.Add(reader.GetUInt32("category_id", 0));
+                }
+            }
+        }
+
+        _territoryPadGroups.Clear();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, houseless, can_extend FROM housing_groups";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var group = reader.GetUInt32("id", 0);
+                    if (HousingTerritoryRules.IsTerritoryPadGroup(
+                            reader.GetBoolean("can_extend"), reader.GetBoolean("houseless")))
+                        _territoryPadGroups.Add(group);
                 }
             }
         }
@@ -164,8 +186,14 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
                                 if (templateBindings != null &&
                                     templateBindings.AttachPointId.TryGetValue(bindingDoodad.AttachPointId,
                                         out var pos))
+                                {
                                     bindingDoodad.Position = pos.Clone();
+                                    bindingDoodad.HasResolvedPosition = true;
+                                }
 
+                                // Left unresolved until the model can supply it. The placeholder keeps the
+                                // property non-null; HasResolvedPosition is what says whether it means
+                                // anything, since the origin is a legitimate offset.
                                 bindingDoodad.Position ??= new WorldSpawnPosition();
 
                                 doodads.Add(bindingDoodad);
@@ -259,6 +287,18 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
             }
         }
 
+        _dominionHousingTemplateIds = [];
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT housing_id FROM dominion_housings";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                    _dominionHousingTemplateIds.Add(reader.GetUInt32("housing_id"));
+            }
+        }
+
     }
 
     public void PostLoad()
@@ -273,13 +313,14 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
     }
 
     /// <summary>
-    /// Replaces the binding offsets taken from housing_bindings.json with the ones held in the model the house
-    /// actually uses. Runs in PostLoad because the attach point table is built by another loader and the
-    /// loaders' Load() order is reflection order.
+    /// Fills in binding offsets that the json table does not define, from the model the house actually uses.
+    /// Runs in PostLoad because the attach point table is built by another loader and the loaders' Load()
+    /// order is reflection order.
     ///
-    /// The json only ever covered 104 of the 631 templates that have bindings, keyed by template id; everything
-    /// else fell back to (0,0,0) and stacked its doodads on the house origin. Attach point geometry belongs to
-    /// the model, not the template, so templates sharing a model now resolve from the same place.
+    /// Attach point geometry belongs to the model rather than to the template, so templates sharing a model
+    /// resolve from the same place. The json covers a minority of the templates that have bindings; the rest
+    /// depend entirely on this pass, and any binding still unresolved afterwards stays marked as such rather
+    /// than being given a placeholder offset.
     /// </summary>
     private void ResolveBindingPositionsFromClientData()
     {
@@ -296,9 +337,9 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
 
             foreach (var bindingDoodad in template.HousingBindingDoodad)
             {
-                // Only fill the gaps. Where housing_bindings.json has an offset it stays — the two sources
-                // disagree on a handful of points and the json is what the server has been running on.
-                if (bindingDoodad.Position != null && bindingDoodad.Position.AsPositionVector() != Vector3.Zero)
+                // Only fill the gaps. Where the json defines an offset it stays: the two sources disagree on
+                // a handful of points and the json is what the server has been running on.
+                if (bindingDoodad.HasResolvedPosition)
                     continue;
 
                 var pos = ModelAttachPointGameData.Instance
@@ -307,6 +348,7 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
                 if (pos != null)
                 {
                     bindingDoodad.Position = pos.Clone();
+                    bindingDoodad.HasResolvedPosition = true;
                     resolved++;
                 }
                 else
@@ -376,6 +418,9 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
     /// <summary>housing group -> house categories it permits (housing_group_categories).</summary>
     private readonly Dictionary<uint, HashSet<uint>> _groupCategories = [];
 
+    /// <summary>housing_groups that are territory pads (can_extend false, houseless false).</summary>
+    private readonly HashSet<uint> _territoryPadGroups = [];
+
     /// <summary>
     /// True when a house of <paramref name="categoryId"/> may be built in the named zone.
     /// </summary>
@@ -389,9 +434,22 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
     /// going away. Nothing in the zone judges a placement, so a shape-accurate test has to read the
     /// LevelDesignShape geometry rather than wait for the zone to object.
     /// </remarks>
-    public bool IsCategoryAllowedInZone(string zoneName, uint categoryId)
+    public bool IsCategoryAllowedInZone(string zoneName, uint categoryId) =>
+        IsCategoryAllowedInNamedAreas(zoneName, categoryId);
+
+    /// <summary>
+    /// Same as <see cref="IsCategoryAllowedInZone(string,uint)"/> but also tries the zone-group name.
+    /// <c>housing_areas.name</c> is the group name on Auroria territories.
+    /// </summary>
+    public bool IsCategoryAllowedInZone(string zoneName, uint categoryId, string zoneGroupName) =>
+        HousingTerritoryRules.CategoryAllowed(
+            IsCategoryAllowedInNamedAreas(zoneName, categoryId),
+            !string.IsNullOrEmpty(zoneGroupName) && zoneGroupName != zoneName
+                && IsCategoryAllowedInNamedAreas(zoneGroupName, categoryId));
+
+    private bool IsCategoryAllowedInNamedAreas(string areaName, uint categoryId)
     {
-        if (string.IsNullOrEmpty(zoneName) || !_zoneHousingGroups.TryGetValue(zoneName, out var groups))
+        if (string.IsNullOrEmpty(areaName) || !_zoneHousingGroups.TryGetValue(areaName, out var groups))
             return false;
 
         foreach (var group in groups)
@@ -401,19 +459,47 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
         return false;
     }
 
+    /// <summary>
+    /// Farm / altar / workshop / walls: a category allowed by a territory-pad housing group on this zone.
+    /// </summary>
+    public bool IsTerritoryHousingCategory(string zoneName, uint categoryId, string zoneGroupName = null)
+    {
+        if (IsTerritoryHousingCategoryInAreas(zoneName, categoryId))
+            return true;
+        return !string.IsNullOrEmpty(zoneGroupName)
+               && zoneGroupName != zoneName
+               && IsTerritoryHousingCategoryInAreas(zoneGroupName, categoryId);
+    }
+
+    private bool IsTerritoryHousingCategoryInAreas(string areaName, uint categoryId)
+    {
+        if (string.IsNullOrEmpty(areaName) || !_zoneHousingGroups.TryGetValue(areaName, out var groups))
+            return false;
+
+        var listed = new List<(uint GroupId, IReadOnlyCollection<uint> Categories, bool IsTerritoryPad)>();
+        foreach (var group in groups)
+        {
+            if (_groupCategories.TryGetValue(group, out var categories))
+                listed.Add((group, categories, _territoryPadGroups.Contains(group)));
+        }
+
+        return HousingTerritoryRules.IsTerritoryCategory(categoryId, listed);
+    }
+
     public HousingTemplate GetTemplate(uint designId)
     {
         return _housingTemplates.GetValueOrDefault(designId);
     }
 
-    /// <summary>
-    /// housings.id 830/831/832 (Green/Red/Blue Flag Residence of High Spirit) - a universal per-guild
-    /// clubhouse placeable in ordinary continent housing zones, unrelated to castle/dominion territory
-    /// ownership. No dedicated game-data table exists for this set, so it's hardcoded here.
-    /// </summary>
-    private static readonly HashSet<uint> ExpeditionResidenceTemplateIds = [830, 831, 832];
+    public bool IsDominionHousingTemplate(uint templateId) => _dominionHousingTemplateIds.Contains(templateId);
 
-    public bool IsExpeditionResidenceTemplate(uint templateId) => ExpeditionResidenceTemplateIds.Contains(templateId);
+    /// <summary>
+    /// Guild residence designs: every <c>housings</c> row whose <c>family</c> is the shipped
+    /// <c>hs_expedition_house*</c> prefix. One per guild, ordinary housing groups — not castle territory.
+    /// </summary>
+    public bool IsExpeditionResidenceTemplate(uint templateId) =>
+        _housingTemplates.TryGetValue(templateId, out var template)
+        && HousingResidenceRules.IsExpeditionResidenceFamily(template.Family);
 
     /// <summary>
     /// Gets data for the item for a housing decoration
@@ -442,6 +528,18 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
     }
 
     /// <summary>
+    /// Get house design (housing template id) that a given item template places, from item_housings.
+    /// Reverse of <see cref="GetItemIdByDesign"/>. Returns 0 if the item has no housing design (not every
+    /// item that shares a placement skill is actually a buildable structure).
+    /// </summary>
+    /// <param name="itemId"></param>
+    /// <returns></returns>
+    public uint GetDesignByItemId(uint itemId)
+    {
+        return _housingItemHousings.FirstOrDefault(h => h.Item_Id == itemId)?.Design_Id ?? 0;
+    }
+
+    /// <summary>
     /// Get decoration design by Id
     /// </summary>
     /// <param name="designId"></param>
@@ -460,4 +558,5 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
     {
         return _housingDecorations.FirstOrDefault(x => x.Value.DoodadId == doodadId).Value;
     }
+
 }

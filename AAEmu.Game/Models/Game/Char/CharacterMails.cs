@@ -48,6 +48,8 @@ public class CharacterMails
         var candidates = new List<BaseMail>();
         foreach (var (_, mail) in MailManager.Instance.AllPlayerMails)
         {
+            if (!MailDeliveryRules.IsPublished(mail))
+                continue;
             if (mail.Body.RecvDate > now)
                 continue;
             if (!BelongsInMailbox(mail, mailBoxListKind))
@@ -127,6 +129,8 @@ public class CharacterMails
         var now = DateTime.UtcNow;
         foreach (var (_, mail) in store)
         {
+            if (!MailDeliveryRules.IsPublished(mail))
+                continue;
             var isForMe = mail.Header.ReceiverId == Self.Id;
             var isFromMe = mail.Header.SenderId == Self.Id && mail.Header.SenderId != 0;
             if (!isForMe && !isFromMe)
@@ -164,7 +168,8 @@ public class CharacterMails
     {
         mail = null;
 
-        if (!MailManager.Instance.AllPlayerMails.TryGetValue(id, out var found))
+        if (!MailManager.Instance.AllPlayerMails.TryGetValue(id, out var found) ||
+            !MailDeliveryRules.IsPublished(found))
             return false;
 
         var party = sentBox ? found.Header.SenderId : found.Header.ReceiverId;
@@ -182,7 +187,7 @@ public class CharacterMails
     {
         mail = null;
         var store = MailManager.Instance?.AllPlayerMails;
-        return store != null && store.TryGetValue(id, out mail);
+        return store != null && store.TryGetValue(id, out mail) && MailDeliveryRules.IsPublished(mail);
     }
 
     /// <summary>

@@ -675,6 +675,49 @@ public partial class Character : Unit, ICharacter
     public long BankAaPoint { get; set; }
     public int HonorPoint { get; set; }
     public int VocationPoint { get; set; }
+    /// <summary>
+    /// Current Hero-election-period leadership - what candidacy/leaderboard ranking is computed from.
+    /// Reset to 0 by HeroManager's roll at the start of each cycle's LeadershipRanking phase, after
+    /// <see cref="LeadershipPeriodPoint"/> below has been snapshotted from it. NOT the lifetime total - see
+    /// <see cref="AccumulatedLeadershipPoint"/> for that.
+    /// </summary>
+    public int LeadershipPoint { get; set; }
+
+    /// <summary>
+    /// The PREVIOUS Hero-election period's final leadership - a closed, frozen record. Only HeroManager's
+    /// per-cycle roll (LeadershipRanking phase entry) should ever write it, by copying
+    /// <see cref="LeadershipPoint"/> in right before resetting it. An award earned mid-period must never
+    /// touch this - it would rewrite a closed record.
+    /// </summary>
+    /// <remarks>
+    /// This, not the current total, is what the client's native X2Hero:IsVoter() actually reads (via
+    /// SCCharacterGamePointsPacket slot 12 / SCHeroSeasonOffPacket, "periodLeadershipPoint" - the sheet's
+    /// "Last Season Leadership" row) to gate the vote checkbox.
+    /// </remarks>
+    public int LeadershipPeriodPoint { get; set; }
+
+    /// <summary>Lifetime leadership, never reset - the client's "Current Record" right-hand figure.</summary>
+    public int AccumulatedLeadershipPoint { get; set; }
+
+    /// <summary>Leadership earned since <see cref="LastDailyLeadershipPointTime"/> - retail's daily cap
+    /// tracker (not enforced server-side yet).</summary>
+    public uint DailyLeadershipPoint { get; set; }
+
+    /// <summary>When <see cref="DailyLeadershipPoint"/> last rolled over. Default means "never accrued".</summary>
+    public DateTime LastDailyLeadershipPointTime { get; set; }
+
+    /// <summary>
+    /// Mobilization Orders this Hero issued today (UTC); the client shows it against
+    /// <c>content_configs.mobilization_order_daily_count_max</c>. Resets when
+    /// <see cref="LastMobilizationOrderTime"/> falls on another day.
+    /// </summary>
+    public int MobilizationOrderTodayCount { get; set; }
+
+    /// <summary>Orders issued this term; a Hero bonus condition (hero_bonuses.mobilization_order_count).</summary>
+    public int MobilizationOrderTotalCount { get; set; }
+
+    /// <summary>When this character last issued a Mobilization Order. Default means "never issued".</summary>
+    public DateTime LastMobilizationOrderTime { get; set; }
 
     /// <summary>
     /// Body to restore when a CharTransformEffect polymorph ends. Set on the first transform only, so a
@@ -2632,10 +2675,39 @@ public partial class Character : Unit, ICharacter
                 change = (int)(newVocation - VocationPoint);
                 VocationPoint = (int)newVocation;
                 break;
+            case GamePointKind.Leadership:
+                // Touches the current period and (on a real gain) the lifetime/daily totals only.
+                // LeadershipPeriodPoint is deliberately NOT moved here - it is the closed record of the
+                // previous period; only HeroManager's per-cycle roll may write it.
+                var newLeadership = Math.Clamp((long)LeadershipPoint + change, 0L, int.MaxValue);
+                change = (int)(newLeadership - LeadershipPoint);
+                LeadershipPoint = (int)newLeadership;
+                if (change > 0)
+                {
+                    // A loss reduces what's held this period but must not un-earn what was already earned
+                    // lifetime, and must not credit the daily cap counter.
+                    var now = DateTime.UtcNow;
+                    if (LastDailyLeadershipPointTime.Date != now.Date)
+                    {
+                        DailyLeadershipPoint = 0;
+                        LastDailyLeadershipPointTime = now;
+                    }
+                    AccumulatedLeadershipPoint = (int)Math.Clamp((long)AccumulatedLeadershipPoint + change, 0L, int.MaxValue);
+                    DailyLeadershipPoint = (uint)Math.Clamp((long)DailyLeadershipPoint + change, 0L, uint.MaxValue);
+                    LastDailyLeadershipPointTime = now;
+                }
+                // The Hero-election voter/rating gate reads periodLeadershipPoint off a dedicated client-side
+                // slot populated by SCHeroSeasonOffPacket. Sent here so a mid-session leadership change
+                // reaches an already-connected client without waiting for the next relog.
+                SendPacket(new SCHeroSeasonOffPacket(0, LeadershipPeriodPoint));
+                break;
             default:
                 Logger.Error($"ChangeGamePoints - Unknown Game Point Type {kind}");
                 return;
         }
+        // The character sheet's game-points table only reflects a resend of the whole set, not the delta
+        // packet below - every GamePointKind goes through this one choke point.
+        SendPacket(new SCCharacterGamePointsPacket(this));
         SendPacket(new SCGamePointChangedPacket((byte)kind, change));
     }
 
@@ -3348,6 +3420,14 @@ public partial class Character : Unit, ICharacter
                     character.BankAaPoint = reader.GetInt64("bank_aa_point");
                     character.HonorPoint = reader.GetInt32("honor_point");
                     character.VocationPoint = reader.GetInt32("vocation_point");
+                    character.LeadershipPoint = reader.GetInt32("leadership_point");
+                    character.LeadershipPeriodPoint = reader.GetInt32("leadership_period_point");
+                    character.AccumulatedLeadershipPoint = reader.GetInt32("accumulated_leadership_point");
+                    character.DailyLeadershipPoint = reader.GetUInt32("daily_leadership_point");
+                    character.LastDailyLeadershipPointTime = reader.GetDateTime("last_daily_leadership_point_time");
+                    character.MobilizationOrderTodayCount = reader.GetInt32("mobilization_order_today_count");
+                    character.MobilizationOrderTotalCount = reader.GetInt32("mobilization_order_total_count");
+                    character.LastMobilizationOrderTime = reader.GetDateTime("last_mobilization_order_time");
                     character.CrimePoint = reader.GetInt16("crime_point");
                     character.TotalPlayTime = reader.GetUInt32("total_play_time");
                     character.CrimeRecord = reader.GetInt32("crime_record");
@@ -3473,6 +3553,14 @@ public partial class Character : Unit, ICharacter
                     character.BankAaPoint = reader.GetInt64("bank_aa_point");
                     character.HonorPoint = reader.GetInt32("honor_point");
                     character.VocationPoint = reader.GetInt32("vocation_point");
+                    character.LeadershipPoint = reader.GetInt32("leadership_point");
+                    character.LeadershipPeriodPoint = reader.GetInt32("leadership_period_point");
+                    character.AccumulatedLeadershipPoint = reader.GetInt32("accumulated_leadership_point");
+                    character.DailyLeadershipPoint = reader.GetUInt32("daily_leadership_point");
+                    character.LastDailyLeadershipPointTime = reader.GetDateTime("last_daily_leadership_point_time");
+                    character.MobilizationOrderTodayCount = reader.GetInt32("mobilization_order_today_count");
+                    character.MobilizationOrderTotalCount = reader.GetInt32("mobilization_order_total_count");
+                    character.LastMobilizationOrderTime = reader.GetDateTime("last_mobilization_order_time");
                     character.CrimePoint = reader.GetInt16("crime_point");
                     character.TotalPlayTime = reader.GetUInt32("total_play_time");
                     character.CrimeRecord = reader.GetInt32("crime_record");
@@ -3743,7 +3831,7 @@ public partial class Character : Unit, ICharacter
                     "`hp`,`mp`,`consumed_lp`,`ability1`,`ability2`,`ability3`," +
                     "`world_id`,`zone_id`,`x`,`y`,`z`,`roll`,`pitch`,`yaw`," +
                     "`faction_id`,`faction_name`,`expedition_id`,`family`,`dead_count`,`dead_time`,`rez_wait_duration`,`rez_time`,`rez_penalty_duration`,`leave_time`," +
-                    "`money`,`money2`,`aa_point`,`bank_aa_point`,`honor_point`,`vocation_point`,`crime_point`,`crime_record`,`jury_point`," +
+                    "`money`,`money2`,`aa_point`,`bank_aa_point`,`honor_point`,`vocation_point`,`leadership_point`,`leadership_period_point`,`accumulated_leadership_point`,`daily_leadership_point`,`last_daily_leadership_point_time`,`mobilization_order_today_count`,`mobilization_order_total_count`,`last_mobilization_order_time`,`crime_point`,`crime_record`,`jury_point`," +
                     "`hostile_faction_kills`,`pvp_honor`,`died_in_pvp`,`died_in_pvp_war_zone`," +
                     "`delete_request_time`,`transfer_request_time`,`delete_time`,`auto_use_aapoint`,`prev_point`,`point`,`gift`," +
                     "`num_inv_slot`,`num_bank_slot`,`expanded_expert`,`slots`,`created_at`,`updated_at`,`return_district`,`online_time`,`total_play_time`,`privacy_status`," +
@@ -3756,7 +3844,7 @@ public partial class Character : Unit, ICharacter
                     "@hp,@mp,@consumed_lp,@ability1,@ability2,@ability3," +
                     "@world_id,@zone_id,@x,@y,@z,@yaw,@pitch,@roll," +
                     "@faction_id,@faction_name,@expedition_id,@family,@dead_count,@dead_time,@rez_wait_duration,@rez_time,@rez_penalty_duration,@leave_time," +
-                    "@money,@money2,@aa_point,@bank_aa_point,@honor_point,@vocation_point,@crime_point,@crime_record,@jury_point," +
+                    "@money,@money2,@aa_point,@bank_aa_point,@honor_point,@vocation_point,@leadership_point,@leadership_period_point,@accumulated_leadership_point,@daily_leadership_point,@last_daily_leadership_point_time,@mobilization_order_today_count,@mobilization_order_total_count,@last_mobilization_order_time,@crime_point,@crime_record,@jury_point," +
                     "@hostile_faction_kills,@pvp_honor,@died_in_pvp,@died_in_pvp_war_zone," +
                     "@delete_request_time,@transfer_request_time,@delete_time,@auto_use_aapoint,@prev_point,@point,@gift," +
                     "@num_inv_slot,@num_bank_slot,@expanded_expert,@slots,@created_at,@updated_at,@return_district,@online_time,@total_play_time,@privacy_status," +
@@ -3819,6 +3907,14 @@ public partial class Character : Unit, ICharacter
                 command.Parameters.AddWithValue("@bank_aa_point", BankAaPoint);
                 command.Parameters.AddWithValue("@honor_point", HonorPoint);
                 command.Parameters.AddWithValue("@vocation_point", VocationPoint);
+                command.Parameters.AddWithValue("@leadership_point", LeadershipPoint);
+                command.Parameters.AddWithValue("@leadership_period_point", LeadershipPeriodPoint);
+                command.Parameters.AddWithValue("@accumulated_leadership_point", AccumulatedLeadershipPoint);
+                command.Parameters.AddWithValue("@daily_leadership_point", DailyLeadershipPoint);
+                command.Parameters.AddWithValue("@last_daily_leadership_point_time", LastDailyLeadershipPointTime);
+                command.Parameters.AddWithValue("@mobilization_order_today_count", MobilizationOrderTodayCount);
+                command.Parameters.AddWithValue("@mobilization_order_total_count", MobilizationOrderTotalCount);
+                command.Parameters.AddWithValue("@last_mobilization_order_time", LastMobilizationOrderTime);
                 AccumulatePlayTime();
                 command.Parameters.AddWithValue("@total_play_time", TotalPlayTime);
                 command.Parameters.AddWithValue("@crime_point", CrimePoint);

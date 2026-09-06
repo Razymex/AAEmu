@@ -410,6 +410,28 @@ public class UnitReqs
             case UnitReqsKindType.MaxLevel:
                 return Ret(SkillResultKeys.skill_urk_max_level, player?.Level <= Value1);
 
+            case UnitReqsKindType.LeadershipTotal:
+                return RetWithValue(SkillResultKeys.skill_urk_leadership_total, Value1,
+                    player != null && player.AccumulatedLeadershipPoint >= Value1);
+
+            case UnitReqsKindType.LeadershipCurrent:
+                return RetWithValue(SkillResultKeys.skill_urk_leadership_current, Value1,
+                    player != null && player.LeadershipPoint >= Value1);
+
+            case UnitReqsKindType.LeadershipPeriod:
+                return RetWithValue(SkillResultKeys.skill_urk_leadership_period, Value1,
+                    player != null && player.LeadershipPeriodPoint >= Value1);
+
+            case UnitReqsKindType.Hero:
+                return Ret(SkillResultKeys.skill_urk_hero, player != null && HeroManager.Instance.IsCurrentHero(player));
+
+            case UnitReqsKindType.NotHero:
+                return Ret(SkillResultKeys.skill_urk_not_hero, player != null && !HeroManager.Instance.IsCurrentHero(player));
+
+            case UnitReqsKindType.NotHeroNotCandidate:
+                return Ret(SkillResultKeys.skill_urk_not_hero_not_candidate,
+                    player != null && !HeroManager.Instance.IsCurrentHero(player) && !HeroManager.Instance.IsCandidate(player));
+
             case UnitReqsKindType.ExpeditionOwner:
                 return Ret(SkillResultKeys.skill_urk_expedition_owner,
                     player != null && player.Expedition?.OwnerId == player.Id);
