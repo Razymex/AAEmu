@@ -1413,6 +1413,7 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
     /// </summary>
     private static void DeliverElectionMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail, BaseMail mail)
     {
+        using var persist = MailManager.Instance.DeferPersist();
         using var transaction = connection.BeginTransaction();
         try
         {
@@ -1429,14 +1430,16 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             }
 
             transaction.Commit();
-            MailManager.Instance.PublishDelivered(mail);
         }
         catch (Exception ex)
         {
             transaction.Rollback();
             MailManager.Instance.DiscardUnpersisted(mail);
             Logger.Error(ex, "Hero {0} mail for {1} failed", candidateMail ? "candidate" : "reward", characterId);
+            return;
         }
+
+        MailManager.Instance.PublishDelivered(mail);
     }
 
     private static bool TryClaimMailSent(MySqlConnection connection, MySqlTransaction transaction, uint cycleId, uint factionId, uint characterId, bool candidateMail)

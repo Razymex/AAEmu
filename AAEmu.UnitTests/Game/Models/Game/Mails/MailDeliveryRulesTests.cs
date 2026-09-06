@@ -46,4 +46,19 @@ public class MailDeliveryRulesTests
         await Assert.That(MailDeliveryRules.IsPublished(new BaseMail())).IsTrue();
         await Assert.That(MailDeliveryRules.IsPublished(new BaseMail { IsPendingPublish = true })).IsFalse();
     }
+
+    [Test]
+    public async Task HoldAttachmentsFromWorldSave_KeepsItemsOffThePeriodicSave()
+    {
+        var mail = new BaseMail();
+        var item = new Item(1) { Id = 8, Count = 1 };
+        mail.Body.Attachments.Add(item);
+
+        await Assert.That(MailDeliveryRules.CanWorldSaveItem(item)).IsTrue();
+        MailDeliveryRules.HoldAttachmentsFromWorldSave(mail, true);
+        await Assert.That(item.ExcludeFromWorldSave).IsTrue();
+        await Assert.That(MailDeliveryRules.CanWorldSaveItem(item)).IsFalse();
+        MailDeliveryRules.HoldAttachmentsFromWorldSave(mail, false);
+        await Assert.That(MailDeliveryRules.CanWorldSaveItem(item)).IsTrue();
+    }
 }

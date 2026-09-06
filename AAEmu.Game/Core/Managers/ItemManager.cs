@@ -1780,6 +1780,9 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     if (item == null)
                         continue;
 
+                    if (!MailDeliveryRules.CanWorldSaveItem(item))
+                        continue;
+
                     if (item.SlotType == SlotType.None)
                     {
                         // Only give an error if it has no owner, otherwise it's likely a BuyBack item

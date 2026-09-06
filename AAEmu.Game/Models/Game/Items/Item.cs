@@ -33,6 +33,13 @@ public class Item : PacketMarshaler, IComparable<Item>
     [JsonIgnore]
     public bool IsDirty { get => _isDirty; set => _isDirty = value; }
 
+    /// <summary>
+    /// Staged on an uncommitted delivery. The periodic world save must not write this
+    /// row until the caller publishes the letter.
+    /// </summary>
+    [JsonIgnore]
+    public bool ExcludeFromWorldSave { get; set; }
+
     [JsonProperty]
     public byte WorldId { get => _worldId; set { _worldId = value; _isDirty = true; } }
 

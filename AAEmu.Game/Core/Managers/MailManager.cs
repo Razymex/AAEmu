@@ -79,9 +79,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
         try
         {
-            // Prepare and write only after staging so a concurrent world save still
-            // skips unowned None-slot items. Do not publish: mailbox/claim/save must
-            // not see this letter until the caller commits and PublishDelivered runs.
+            // Hold attachments off the periodic world save until PublishDelivered.
+            MailDeliveryRules.HoldAttachmentsFromWorldSave(mail, true);
             MailDeliveryRules.PrepareAttachments(mail);
             WriteMail(mail, connection, transaction);
             PersistMailAttachments(mail, connection, transaction);
@@ -164,6 +163,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             _pendingMails.Remove(mail.Id);
 
         mail.IsPendingPublish = false;
+        MailDeliveryRules.HoldAttachmentsFromWorldSave(mail, false);
         _allPlayerMails ??= [];
         lock (_allPlayerMails)
         {
@@ -171,7 +171,16 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         }
 
         receiverName = nameManager.GetCharacterName(mail.Header.ReceiverId) ?? mail.Header.ReceiverName;
-        NotifyNewMailByNameIfOnline(mail, receiverName);
+        try
+        {
+            NotifyNewMailByNameIfOnline(mail, receiverName);
+        }
+        catch (Exception ex)
+        {
+            // The letter is already published and the caller already committed.
+            // Do not throw: callers must not treat this as a delivery rollback.
+            Logger.Error(ex, "PublishDelivered notify failed for mail {0}", mail.Id);
+        }
     }
 
     private bool TryEnqueue(BaseMail mail, out string targetName)

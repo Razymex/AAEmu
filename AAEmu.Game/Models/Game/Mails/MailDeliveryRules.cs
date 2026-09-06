@@ -31,4 +31,18 @@ public static class MailDeliveryRules
 
     public static bool IsPublished(BaseMail mail) =>
         mail is { IsPendingPublish: false };
+
+    public static bool CanWorldSaveItem(Item item) =>
+        item is { ExcludeFromWorldSave: false };
+
+    public static void HoldAttachmentsFromWorldSave(BaseMail mail, bool hold)
+    {
+        if (mail?.Body.Attachments == null)
+            return;
+        foreach (var item in mail.Body.Attachments)
+        {
+            if (item != null)
+                item.ExcludeFromWorldSave = hold;
+        }
+    }
 }

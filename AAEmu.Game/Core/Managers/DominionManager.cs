@@ -410,6 +410,7 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
             var settled = DominionClaimRules.SettleTaxPool(beforeSend, payable, now);
             ApplyTaxPool(dominion, settled);
 
+            using (var persist = MailManager.Instance.DeferPersist())
             using (var connection = MySQL.CreateConnection())
             using (var transaction = connection.BeginTransaction())
             {
@@ -425,7 +426,6 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
                     }
 
                     transaction.Commit();
-                    MailManager.Instance.PublishDelivered(mail);
                 }
                 catch (Exception ex)
                 {
@@ -435,6 +435,8 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
                     Logger.Error(ex, "Dominion tax payout: zone {0} persist failed", dominion.ZoneId);
                     continue;
                 }
+
+                MailManager.Instance.PublishDelivered(mail);
             }
 
             Logger.Info("Dominion tax payout: zone {0}, {1} copper to {2}", dominion.ZoneId, payable, receiverName);
