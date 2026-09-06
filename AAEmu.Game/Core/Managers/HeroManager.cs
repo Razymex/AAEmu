@@ -1019,7 +1019,10 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         foreach (var factionId in HeroGameData.Instance.FactionsWithRewards)
         {
             if (CountCandidates(connection, cycle.Id, factionId) > 0)
+            {
+                SendPendingCandidateMails(connection, cycle, factionId, condition);
                 continue;
+            }
 
             var persisted = new List<(uint characterId, int points)>();
             using (var select = connection.CreateCommand())
@@ -1073,7 +1076,7 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             }
 
             foreach (var (characterId, _) in candidates)
-                SendCandidateMail(characterId, condition, cycle);
+                TrySendCandidateMail(connection, cycle.Id, factionId, characterId, condition, cycle);
 
             Logger.Info("Hero cycle {0} faction {1}: {2} candidates", cycle.Id, factionId, candidates.Count);
         }
@@ -1092,7 +1095,10 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         foreach (var factionId in HeroGameData.Instance.FactionsWithRewards)
         {
             if (CountElected(connection, cycle.Id, factionId) > 0)
+            {
+                SendPendingRewardMails(connection, cycle, factionId, condition);
                 continue;
+            }
 
             var ranked = new List<uint>();
             using (var select = connection.CreateCommand())
@@ -1157,7 +1163,7 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             foreach (var characterId in seatedIds)
                 ApplyTermCountersOnline(characterId);
             foreach (var (characterId, reward) in pendingRewards)
-                SendRewardMail(characterId, reward, condition, cycle);
+                TrySendRewardMail(connection, cycle.Id, factionId, characterId, reward, condition, cycle);
 
             Logger.Info("Hero cycle {0} faction {1}: seated {2} of {3} ranked candidates", cycle.Id, factionId, Math.Min(seats, ranked.Count), ranked.Count);
         }
@@ -1264,11 +1270,81 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         command.ExecuteNonQuery();
     }
 
-    private static void SendCandidateMail(uint characterId, HeroCondition condition, HeroCycle cycle)
+    private static void SendPendingCandidateMails(MySqlConnection connection, HeroCycle cycle, uint factionId, HeroCondition condition)
+    {
+        var rows = new List<(uint CharacterId, bool MailSent)>();
+        using (var select = connection.CreateCommand())
+        {
+            select.CommandText = "SELECT character_id, candidate_mail_sent FROM hero_candidates WHERE cycle_id=@c AND faction_id=@f";
+            select.Parameters.AddWithValue("@c", cycle.Id);
+            select.Parameters.AddWithValue("@f", factionId);
+            select.Prepare();
+            using var reader = select.ExecuteReader();
+            while (reader.Read())
+                rows.Add(((uint)reader.GetInt32(0), reader.GetBoolean(1)));
+        }
+
+        foreach (var characterId in HeroElectionRules.PendingMailCharacterIds(rows))
+            TrySendCandidateMail(connection, cycle.Id, factionId, characterId, condition, cycle);
+    }
+
+    private static void SendPendingRewardMails(MySqlConnection connection, HeroCycle cycle, uint factionId, HeroCondition condition)
+    {
+        var ranked = new List<(uint CharacterId, bool MailSent)>();
+        using (var select = connection.CreateCommand())
+        {
+            select.CommandText = "SELECT character_id, reward_mail_sent FROM hero_candidates WHERE cycle_id=@c AND faction_id=@f AND elected=1 ORDER BY votes DESC, leadership_point_at_ranking DESC";
+            select.Parameters.AddWithValue("@c", cycle.Id);
+            select.Parameters.AddWithValue("@f", factionId);
+            select.Prepare();
+            using var reader = select.ExecuteReader();
+            while (reader.Read())
+                ranked.Add(((uint)reader.GetInt32(0), reader.GetBoolean(1)));
+        }
+
+        for (var i = 0; i < ranked.Count; i++)
+        {
+            if (ranked[i].MailSent)
+                continue;
+            var reward = HeroGameData.Instance.GetReward(factionId, i + 1);
+            if (reward == null)
+                continue;
+            TrySendRewardMail(connection, cycle.Id, factionId, ranked[i].CharacterId, reward, condition, cycle);
+        }
+    }
+
+    private static void TrySendCandidateMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, HeroCondition condition, HeroCycle cycle)
+    {
+        if (!SendCandidateMail(characterId, condition, cycle))
+            return;
+        MarkMailSent(connection, cycleId, factionId, characterId, candidateMail: true);
+    }
+
+    private static void TrySendRewardMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
+    {
+        if (!SendRewardMail(characterId, reward, condition, cycle))
+            return;
+        MarkMailSent(connection, cycleId, factionId, characterId, candidateMail: false);
+    }
+
+    private static void MarkMailSent(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = candidateMail
+            ? "UPDATE hero_candidates SET candidate_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch"
+            : "UPDATE hero_candidates SET reward_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch";
+        command.Parameters.AddWithValue("@c", cycleId);
+        command.Parameters.AddWithValue("@f", factionId);
+        command.Parameters.AddWithValue("@ch", characterId);
+        command.Prepare();
+        command.ExecuteNonQuery();
+    }
+
+    private static bool SendCandidateMail(uint characterId, HeroCondition condition, HeroCycle cycle)
     {
         var name = NameManager.Instance.GetCharacterName(characterId);
         if (name == null)
-            return;
+            return false;
 
         var abstain = PhaseWindow(cycle, HeroPhase.HeroAbstain);
         var mail = new BaseMail
@@ -1283,13 +1359,14 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         mail.Body.Text = HeroMailWire.FormatPeriodBody(condition.CandidateMailBody, abstain.Start, abstain.End);
         mail.Body.RecvDate = DateTime.UtcNow;
         mail.Send();
+        return true;
     }
 
-    private static void SendRewardMail(uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
+    private static bool SendRewardMail(uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
     {
         var name = NameManager.Instance.GetCharacterName(characterId);
         if (name == null)
-            return;
+            return false;
 
         var activity = PhaseWindow(cycle, HeroPhase.HeroPeriod);
         var mail = new BaseMail
@@ -1317,5 +1394,6 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         }
 
         mail.Send();
+        return true;
     }
 }

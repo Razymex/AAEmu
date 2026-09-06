@@ -178,6 +178,22 @@ public static class HeroElectionRules
         level >= minLevel && leadershipPoint >= minPoint;
 
     /// <summary>
+    /// Rows whose mail has not been marked sent. Used so a later tick can finish a post-commit send
+    /// that was interrupted, without treating "row exists" as "mail delivered".
+    /// </summary>
+    public static List<uint> PendingMailCharacterIds(IEnumerable<(uint CharacterId, bool MailSent)> rows)
+    {
+        var pending = new List<uint>();
+        foreach (var (characterId, mailSent) in rows)
+        {
+            if (!mailSent)
+                pending.Add(characterId);
+        }
+
+        return pending;
+    }
+
+    /// <summary>
     /// Freeze roster: persisted rows plus anyone online whose live current-period
     /// leadership already meets the gate. Live wins when both exist — a GM set or
     /// an unsaved award is not in MySQL yet.

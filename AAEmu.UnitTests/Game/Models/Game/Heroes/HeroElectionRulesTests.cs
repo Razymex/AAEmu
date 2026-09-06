@@ -84,6 +84,19 @@ public class HeroElectionRulesTests
     }
 
     [Test]
+    public async Task PendingMailCharacterIds_SkipsAlreadySentRows()
+    {
+        var pending = HeroElectionRules.PendingMailCharacterIds(
+        [
+            (1u, true),
+            (2u, false),
+            (3u, false)
+        ]);
+
+        await Assert.That(pending).IsEquivalentTo(new[] { 2u, 3u });
+    }
+
+    [Test]
     public async Task BallotPickCount_ClipsToRemainingWireNotTheClientCount()
     {
         const int twoPicksAndVoter = sizeof(ulong) * 3;
