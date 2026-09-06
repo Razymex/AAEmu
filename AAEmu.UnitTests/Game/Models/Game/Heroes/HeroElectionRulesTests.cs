@@ -25,10 +25,10 @@ public class HeroElectionRulesTests
     }
 
     [Test]
-    public async Task RollLeadershipPeriod_SkipsAlreadyZeroedCurrent()
+    public async Task RollLeadershipPeriod_SnapshotsCurrentIncludingZero()
     {
         await Assert.That(HeroElectionRules.RollLeadershipPeriod(0, 1200)).IsEqualTo((1200, 0));
-        await Assert.That(HeroElectionRules.RollLeadershipPeriod(1200, 0)).IsEqualTo((1200, 0));
+        await Assert.That(HeroElectionRules.RollLeadershipPeriod(1200, 0)).IsEqualTo((0, 0));
         await Assert.That(HeroElectionRules.RollLeadershipPeriod(400, 900)).IsEqualTo((900, 0));
     }
 

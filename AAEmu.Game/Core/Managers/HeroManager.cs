@@ -161,19 +161,15 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
                 }
             }
 
-            // Skip already-zeroed current so a retry cannot copy 0 over a good period score.
             using (var roll = connection.CreateCommand())
             {
                 roll.Transaction = transaction;
-                roll.CommandText = "UPDATE characters SET leadership_period_point=leadership_point, leadership_point=0 WHERE leadership_point<>0";
+                roll.CommandText = "UPDATE characters SET leadership_period_point=leadership_point, leadership_point=0";
                 roll.ExecuteNonQuery();
             }
 
             foreach (var character in WorldManager.Instance.GetAllCharacters())
             {
-                if (character.LeadershipPoint == 0)
-                    continue;
-
                 rolledOnline.Add((character, character.LeadershipPeriodPoint, character.LeadershipPoint));
                 var rolled = HeroElectionRules.RollLeadershipPeriod(character.LeadershipPeriodPoint, character.LeadershipPoint);
                 character.LeadershipPeriodPoint = rolled.Period;
@@ -897,10 +893,13 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             return false;
         }
 
-        order.AcceptedCharacterIds.Add(character.Id);
-
         if (!SendMobilizationGiveItem(character))
+        {
             Logger.Warn("Mobilization order for faction {0}: rally item mail failed for {1}", nationFactionId, character.Name);
+            return false;
+        }
+
+        order.AcceptedCharacterIds.Add(character.Id);
         Logger.Info("Mobilization order: {0} rallied to faction {1}'s flag", character.Name, nationFactionId);
         return true;
     }
@@ -1394,27 +1393,58 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
 
     private static void TrySendCandidateMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, HeroCondition condition, HeroCycle cycle)
     {
-        if (!TryClaimMailSent(connection, cycleId, factionId, characterId, candidateMail: true))
+        var mail = BuildCandidateMail(characterId, condition, cycle);
+        if (mail == null)
             return;
-        if (!SendCandidateMail(characterId, condition, cycle))
-            ClearMailSent(connection, cycleId, factionId, characterId, candidateMail: true);
+        DeliverElectionMail(connection, cycleId, factionId, characterId, candidateMail: true, mail);
     }
 
     private static void TrySendRewardMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
     {
-        if (!TryClaimMailSent(connection, cycleId, factionId, characterId, candidateMail: false))
+        var mail = BuildRewardMail(characterId, reward, condition, cycle);
+        if (mail == null)
             return;
-        if (!SendRewardMail(characterId, reward, condition, cycle))
-            ClearMailSent(connection, cycleId, factionId, characterId, candidateMail: false);
+        DeliverElectionMail(connection, cycleId, factionId, characterId, candidateMail: false, mail);
     }
 
     /// <summary>
-    /// Claims the send so a later tick cannot create a second item-bearing mail. Only the claim that
-    /// updates a still-unsent row proceeds to <c>Send</c>.
+    /// Claim marker and mail (plus attachment items) commit together. A stop before commit
+    /// leaves sent=0 so the next tick can retry; a commit cannot mark sent without the mail row.
     /// </summary>
-    private static bool TryClaimMailSent(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail)
+    private static void DeliverElectionMail(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail, BaseMail mail)
+    {
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            if (!TryClaimMailSent(connection, transaction, cycleId, factionId, characterId, candidateMail))
+            {
+                transaction.Rollback();
+                return;
+            }
+
+            if (!MailManager.Instance.TryDeliverOn(mail, connection, transaction))
+            {
+                transaction.Rollback();
+                return;
+            }
+
+            if (mail.Body.Attachments.Count > 0)
+                ItemManager.Instance.Save(connection, transaction);
+
+            transaction.Commit();
+        }
+        catch (Exception ex)
+        {
+            transaction.Rollback();
+            MailManager.Instance.DiscardUnpersisted(mail);
+            Logger.Error(ex, "Hero {0} mail for {1} failed", candidateMail ? "candidate" : "reward", characterId);
+        }
+    }
+
+    private static bool TryClaimMailSent(MySqlConnection connection, MySqlTransaction transaction, uint cycleId, uint factionId, uint characterId, bool candidateMail)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = candidateMail
             ? "UPDATE hero_candidates SET candidate_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch AND candidate_mail_sent=0"
             : "UPDATE hero_candidates SET reward_mail_sent=1 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch AND reward_mail_sent=0";
@@ -1425,24 +1455,11 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         return command.ExecuteNonQuery() == 1;
     }
 
-    private static void ClearMailSent(MySqlConnection connection, uint cycleId, uint factionId, uint characterId, bool candidateMail)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = candidateMail
-            ? "UPDATE hero_candidates SET candidate_mail_sent=0 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch"
-            : "UPDATE hero_candidates SET reward_mail_sent=0 WHERE cycle_id=@c AND faction_id=@f AND character_id=@ch";
-        command.Parameters.AddWithValue("@c", cycleId);
-        command.Parameters.AddWithValue("@f", factionId);
-        command.Parameters.AddWithValue("@ch", characterId);
-        command.Prepare();
-        command.ExecuteNonQuery();
-    }
-
-    private static bool SendCandidateMail(uint characterId, HeroCondition condition, HeroCycle cycle)
+    private static BaseMail BuildCandidateMail(uint characterId, HeroCondition condition, HeroCycle cycle)
     {
         var name = NameManager.Instance.GetCharacterName(characterId);
         if (name == null)
-            return false;
+            return null;
 
         var abstain = PhaseWindow(cycle, HeroPhase.HeroAbstain);
         var mail = new BaseMail
@@ -1456,14 +1473,14 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
         mail.Header.Status = MailStatus.Unread;
         mail.Body.Text = HeroMailWire.FormatPeriodBody(condition.CandidateMailBody, abstain.Start, abstain.End);
         mail.Body.RecvDate = DateTime.UtcNow;
-        return mail.Send();
+        return mail;
     }
 
-    private static bool SendRewardMail(uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
+    private static BaseMail BuildRewardMail(uint characterId, HeroReward reward, HeroCondition condition, HeroCycle cycle)
     {
         var name = NameManager.Instance.GetCharacterName(characterId);
         if (name == null)
-            return false;
+            return null;
 
         var activity = PhaseWindow(cycle, HeroPhase.HeroPeriod);
         var mail = new BaseMail
@@ -1490,6 +1507,6 @@ public class HeroManager(ITaskManager taskManager) : Singleton<HeroManager>, IHe
             }
         }
 
-        return mail.Send();
+        return mail;
     }
 }

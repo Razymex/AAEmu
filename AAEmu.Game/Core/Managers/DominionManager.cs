@@ -20,6 +20,8 @@ using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models.Tasks.Dominions;
 using AAEmu.Game.Utils;
 
+using MySql.Data.MySqlClient;
+
 using NLog;
 
 namespace AAEmu.Game.Core.Managers;
@@ -407,15 +409,31 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
                 dominion.CurHouseTaxMoney, dominion.CurHuntTaxMoney, dominion.PeaceTaxMoney, dominion.LastPaidTime);
             var settled = DominionClaimRules.SettleTaxPool(beforeSend, payable, now);
             ApplyTaxPool(dominion, settled);
-            PersistTaxPool(dominion);
 
-            var kept = DominionClaimRules.AfterTaxMail(settled, beforeSend, mail.Send());
-            if (kept != settled)
+            using (var connection = MySQL.CreateConnection())
+            using (var transaction = connection.BeginTransaction())
             {
-                ApplyTaxPool(dominion, kept);
-                PersistTaxPool(dominion);
-                Logger.Warn("Dominion tax payout: zone {0} mail failed, restored pool {1}", dominion.ZoneId, payable);
-                continue;
+                try
+                {
+                    PersistTaxPool(dominion, connection, transaction);
+                    if (!MailManager.Instance.TryDeliverOn(mail, connection, transaction))
+                    {
+                        transaction.Rollback();
+                        ApplyTaxPool(dominion, beforeSend);
+                        Logger.Warn("Dominion tax payout: zone {0} mail failed, left pool {1}", dominion.ZoneId, payable);
+                        continue;
+                    }
+
+                    transaction.Commit();
+                }
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    ApplyTaxPool(dominion, beforeSend);
+                    MailManager.Instance.DiscardUnpersisted(mail);
+                    Logger.Error(ex, "Dominion tax payout: zone {0} persist failed", dominion.ZoneId);
+                    continue;
+                }
             }
 
             Logger.Info("Dominion tax payout: zone {0}, {1} copper to {2}", dominion.ZoneId, payable, receiverName);
@@ -433,7 +451,13 @@ public class DominionManager(ITaskManager taskManager, IExpeditionManager expedi
     private void PersistTaxPool(DominionData dominion)
     {
         using var connection = MySQL.CreateConnection();
+        PersistTaxPool(dominion, connection, transaction: null);
+    }
+
+    private static void PersistTaxPool(DominionData dominion, MySqlConnection connection, MySqlTransaction transaction)
+    {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             UPDATE dominions
             SET cur_house_tax_money = @house, cur_hunt_tax_money = @hunt, peace_tax_money = @peace, last_paid_time = @paid

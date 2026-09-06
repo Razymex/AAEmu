@@ -89,11 +89,14 @@ public static class HeroElectionRules
         ServerCalendar.AsUtc(utcNow) < ServerCalendar.AsUtc(expiresAtUtc) && level >= minLevel && leadership >= minLeadership;
 
     /// <summary>
-    /// Previous-period score takes the still-running current total, then current restarts. A zero
-    /// current must not overwrite a period score that already rolled (retry after a partial UPDATE).
+    /// A new cycle snapshots the actual current total, including zero, then current restarts.
+    /// Retry protection is the cycle marker, not "keep the old period when current is 0".
     /// </summary>
-    public static (int Period, int Current) RollLeadershipPeriod(int period, int current) =>
-        current != 0 ? (current, 0) : (period, 0);
+    public static (int Period, int Current) RollLeadershipPeriod(int period, int current)
+    {
+        _ = period;
+        return (current, 0);
+    }
 
     public static bool CanTransferToMobilizationFlag(bool flagFound, bool hasParentWorld) =>
         flagFound && hasParentWorld;

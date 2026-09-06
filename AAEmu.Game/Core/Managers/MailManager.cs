@@ -56,50 +56,78 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     public bool Send(BaseMail mail)
     {
-        // Verify Receiver
-        var targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
+        if (!TryEnqueue(mail, out _))
+            return false;
+        if (EnsurePersisted() != WorldSaveStatus.Failed)
+            return true;
+
+        DiscardUnpersisted(mail);
+        return false;
+    }
+
+    /// <summary>
+    /// Enqueues the letter and writes it on the caller's transaction so a claim/settlement
+    /// marker cannot commit without the mail row.
+    /// </summary>
+    public bool TryDeliverOn(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (mail == null || connection == null || transaction == null)
+            return false;
+        if (!TryEnqueue(mail, out _))
+            return false;
+
+        try
+        {
+            Save(connection, transaction);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "TryDeliverOn failed for mail {0}", mail.Id);
+            DiscardUnpersisted(mail);
+            return false;
+        }
+    }
+
+    public void DiscardUnpersisted(BaseMail mail)
+    {
+        if (mail == null)
+            return;
+        lock (_allPlayerMails)
+            _allPlayerMails.Remove(mail.Id);
+        mail.IsDirty = true;
+    }
+
+    private bool TryEnqueue(BaseMail mail, out string targetName)
+    {
+        targetName = nameManager.GetCharacterName(mail.Header.ReceiverId);
         var targetId = nameManager.GetCharacterId(mail.Header.ReceiverName);
         if (!string.Equals(targetName, mail.Header.ReceiverName, StringComparison.InvariantCultureIgnoreCase))
         {
-            Logger.Debug("Send() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
-            return false; // Name mismatch
+            Logger.Debug("TryEnqueue() - Failed to verify receiver name {0} != {1}", targetName, mail.Header.ReceiverName);
+            return false;
         }
         if (targetId != mail.Header.ReceiverId)
         {
-            Logger.Debug("Send() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
-            return false; // Id mismatch
+            Logger.Debug("TryEnqueue() - Failed to verify receiver id {0} != {1}", targetId, mail.Header.ReceiverId);
+            return false;
         }
 
-        // Assign a Id if we didn't have one yet
         if (mail.Id <= 0)
-        {
-            Logger.Trace("Send() - Assign new mail Id");
             mail.Id = GetNewMailId();
-        }
         _allPlayerMails ??= [];
         lock (_allPlayerMails)
         {
             if (_allPlayerMails.ContainsKey(mail.Id))
             {
-                Logger.Error("Send() - Refusing to replace existing mail {0}", mail.Id);
+                Logger.Error("TryEnqueue() - Refusing to replace existing mail {0}", mail.Id);
                 return false;
             }
 
             _allPlayerMails.Add(mail.Id, mail);
         }
         NotifyNewMailByNameIfOnline(mail, targetName);
-        if (EnsurePersisted() != WorldSaveStatus.Failed)
-            return true;
-
-        ForgetUnpersisted(mail);
-        return false;
-    }
-
-    private void ForgetUnpersisted(BaseMail mail)
-    {
-        lock (_allPlayerMails)
-            _allPlayerMails.Remove(mail.Id);
-        mail.IsDirty = true;
+        return true;
     }
 
     public bool TryReturnToSender(BaseMail mail)

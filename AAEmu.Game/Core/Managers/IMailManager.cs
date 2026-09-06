@@ -11,6 +11,8 @@ public interface IMailManager : ILoadable
     BaseMail GetMailById(long id);
     uint GetNewMailId();
     bool Send(BaseMail mail);
+    bool TryDeliverOn(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction);
+    void DiscardUnpersisted(BaseMail mail);
     bool TryReturnToSender(BaseMail mail);
     bool TryReturnToSenderFor(BaseMail mail, uint characterId);
     [Obsolete]
