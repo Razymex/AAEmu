@@ -102,11 +102,37 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         }
 
         claims[day.Day] = claim;
-        if (!TryGrant(character, grants, out var byMail))
+        if (!TryGrant(character, grants, out var byMail, out var deliveredAny))
         {
-            claims.Remove(day.Day);
-            TryRemoveClaim(character.AccountId, day.Year, day.Month, day.Day);
+            var rollbackOk = false;
+            if (!deliveredAny)
+            {
+                claims.Remove(day.Day);
+                rollbackOk = TryRemoveClaim(character.AccountId, day.Year, day.Month, day.Day);
+                if (!rollbackOk)
+                    claims[day.Day] = claim;
+            }
+
+            if (DurableRewardRules.KeepClaim(false, deliveredAny, rollbackOk))
+            {
+                if (deliveredAny)
+                {
+                    Logger.Warn(
+                        "Account attendance leftover grants failed after a partial delivery for {0}",
+                        character.Name);
+                    character.SendPacket(new SCAccountAttendanceAddedPacket(true, unix, isArchelife));
+                    character.SendPacket(new SCAccountAttendanceRewardedPacket(0, byMail));
+                    SendMonth(character);
+                    return;
+                }
+
+                Logger.Error(
+                    "Account attendance grant failed and the claim could not be removed for {0}",
+                    character.Name);
+            }
+
             character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
+            SendMonth(character);
             return;
         }
 
@@ -123,14 +149,23 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             byMail);
     }
 
-    private static bool TryGrant(Character character, IReadOnlyList<AccountAttendanceReward> grants, out bool byMail)
+    private static bool TryGrant(
+        Character character,
+        IReadOnlyList<AccountAttendanceReward> grants,
+        out bool byMail,
+        out bool deliveredAny)
     {
         byMail = false;
+        deliveredAny = false;
         var items = new List<AccountAttendanceReward>();
         foreach (var grant in grants)
         {
             if (ItemWallet.TryCreditCashPack(character, grant.ItemId, grant.ItemCount))
+            {
+                deliveredAny = true;
                 continue;
+            }
+
             items.Add(grant);
         }
 
@@ -152,6 +187,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                         out _,
                         character.Id))
                     return false;
+                deliveredAny = true;
             }
             return true;
         }
@@ -185,6 +221,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                     out _,
                     character.Id))
                 return false;
+            deliveredAny = true;
             mail.Body.Attachments.AddRange(added);
         }
 

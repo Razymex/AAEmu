@@ -7,6 +7,8 @@ using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills.Effects;
 
+using NLog;
+
 namespace AAEmu.Game.Models.Game.Items;
 
 /// <summary>
@@ -14,6 +16,8 @@ namespace AAEmu.Game.Models.Game.Items;
 /// </summary>
 public static class ItemWallet
 {
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
     public static bool CreditLoyalty(Character character, int amount)
     {
         var add = ItemWalletRules.LoyaltyFromCount(amount);
@@ -50,11 +54,28 @@ public static class ItemWallet
         if (amount <= 0)
             return 0;
 
-        if (!CreditLoyalty(character, amount))
+        return ConsumeThenCreditLoyalty(character, container, Item.BmMileage, amount);
+    }
+
+    public static int ConsumeThenCreditLoyalty(
+        Character character,
+        ItemContainer container,
+        uint templateId,
+        int count,
+        Item item = null)
+    {
+        if (character == null || container == null || count <= 0)
             return 0;
 
-        var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, Item.BmMileage, amount, null);
-        return SettleConsume(character, amount, consumed, loyalty: true);
+        var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, templateId, count, item);
+        if (consumed <= 0)
+            return 0;
+
+        if (CreditLoyalty(character, consumed))
+            return consumed;
+
+        TryRestore(character, container, templateId, consumed, "loyalty");
+        return 0;
     }
 
     public static bool CreditCredits(Character character, int amount)
@@ -127,40 +148,39 @@ public static class ItemWallet
             if (per <= 0)
                 continue;
             var total = group.Sum(x => x.Count);
-            var credits = ItemWalletRules.CreditsFromEffect(per, total);
-            if (!CreditCredits(character, credits))
-                continue;
             var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, group.Key, total, null);
-            var kept = SettleConsume(character, total, consumed, loyalty: false, perCredit: per);
-            if (kept > 0)
-                credited += kept;
+            if (consumed <= 0)
+                continue;
+            var credits = ItemWalletRules.CreditsFromEffect(per, consumed);
+            if (CreditCredits(character, credits))
+            {
+                credited += consumed;
+                continue;
+            }
+
+            TryRestore(character, container, group.Key, consumed, "credits");
         }
 
         return credited;
     }
 
-    private static int SettleConsume(Character character, int requested, int consumed, bool loyalty, int perCredit = 1)
+    private static void TryRestore(
+        Character character,
+        ItemContainer container,
+        uint templateId,
+        int consumed,
+        string wallet)
     {
-        var refundCount = ItemWalletRules.RefundAfterPartialConsume(requested, consumed);
-        if (refundCount > 0)
-        {
-            if (loyalty)
-                AccountManager.Instance.AddLoyalty(character.AccountId, -refundCount);
-            else
-                AccountManager.Instance.AddCredits(
-                    character.AccountId,
-                    -ItemWalletRules.CreditsFromEffect(perCredit, refundCount));
+        var restore = ItemWalletRules.RestoreAfterFailedCredit(consumed, creditOk: false);
+        if (restore <= 0)
+            return;
+        if (container.AcquireDefaultItem(ItemTaskType.ConsumeSkillSource, templateId, restore))
+            return;
 
-            var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
-            if (loyalty)
-            {
-                character.BmPoint = points.Loyalty;
-                character.SendPacket(new SCBmPointPacket(character.BmPoint));
-            }
-            else
-                character.SendPacket(new SCICSCashPointPacket(points.Credits));
-        }
-
-        return Math.Max(0, consumed);
+        Logger.Error(
+            "Wallet convert consumed {0} without a {1} credit and could not restore them for {2}",
+            restore,
+            wallet,
+            character.Name);
     }
 }

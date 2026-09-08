@@ -178,6 +178,17 @@ public class CharacterArchePassTests
     }
 
     [Test]
+    public async Task GrantFailure_RevertsAPersistedClaim()
+    {
+        var state = Started();
+        await Assert.That(state.TryAddPoints(100)).IsTrue();
+        state.FailNextGrant = true;
+        await Assert.That(state.TryClaim(1, premium: false)).IsFalse();
+        await Assert.That(state.Snapshot().Single().LastRewardTier).IsEqualTo(0u);
+        await Assert.That(state.FailNextGrant).IsFalse();
+    }
+
+    [Test]
     public async Task HasProgress_MatchesTheLivePass()
     {
         var state = Create();

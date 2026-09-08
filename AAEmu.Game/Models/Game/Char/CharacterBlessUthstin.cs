@@ -222,6 +222,22 @@ public sealed class CharacterBlessUthstin
                 return false;
 
             snapshot = Capture();
+        }
+
+        if (!BypassChargesForTests)
+        {
+            var consumeItem = Owner.Inventory.GetItemById(pending.ItemId);
+            if (consumeItem == null ||
+                Owner.Inventory.Bag.ConsumeItem(
+                    ItemTaskType.BlessUthstinChangeStats,
+                    pending.ItemType,
+                    pending.NeedCount,
+                    consumeItem) != pending.NeedCount)
+                return FailRequiredItem();
+        }
+
+        lock (_sync)
+        {
             BlessUthstinRules.ApplyRoll(
                 page,
                 pending.IncKind,
@@ -235,23 +251,14 @@ public sealed class CharacterBlessUthstin
         if (!TryPersist())
         {
             Restore(snapshot);
-            return false;
-        }
-
-        if (!BypassChargesForTests)
-        {
-            var consumeItem = Owner.Inventory.GetItemById(pending.ItemId);
-            if (consumeItem == null ||
-                Owner.Inventory.Bag.ConsumeItem(
-                    ItemTaskType.BlessUthstinChangeStats,
-                    pending.ItemType,
-                    pending.NeedCount,
-                    consumeItem) != pending.NeedCount)
+            if (!TryRefundTemplate(pending.ItemType, pending.NeedCount, ItemTaskType.BlessUthstinChangeStats))
             {
-                Restore(snapshot);
-                TryPersist();
-                return FailRequiredItem();
+                Logger.Error(
+                    "BlessUthstin apply persist failed and the item refund did not land for {0}",
+                    Owner.Name);
             }
+
+            return false;
         }
 
         RefreshModifiersIfSelected(pageIndex);
@@ -276,6 +283,17 @@ public sealed class CharacterBlessUthstin
                 return false;
 
             snapshot = Capture();
+        }
+
+        if (!BypassChargesForTests &&
+            !TryConsumeTemplate(
+                BlessUthstinRules.InitItemId,
+                BlessUthstinRules.InitItemCount,
+                ItemTaskType.BlessUthstinInitStats))
+            return false;
+
+        lock (_sync)
+        {
             page.Clear();
             if (_pending?.PageIndex == pageIndex)
                 _pending = null;
@@ -284,17 +302,16 @@ public sealed class CharacterBlessUthstin
         if (!TryPersist())
         {
             Restore(snapshot);
-            return false;
-        }
+            if (!TryRefundTemplate(
+                    BlessUthstinRules.InitItemId,
+                    BlessUthstinRules.InitItemCount,
+                    ItemTaskType.BlessUthstinInitStats))
+            {
+                Logger.Error(
+                    "BlessUthstin init persist failed and the item refund did not land for {0}",
+                    Owner.Name);
+            }
 
-        if (!BypassChargesForTests &&
-            !TryConsumeTemplate(
-                BlessUthstinRules.InitItemId,
-                BlessUthstinRules.InitItemCount,
-                ItemTaskType.BlessUthstinInitStats))
-        {
-            Restore(snapshot);
-            TryPersist();
             return false;
         }
         RefreshModifiersIfSelected(pageIndex);
@@ -317,6 +334,14 @@ public sealed class CharacterBlessUthstin
 
             need = BlessUthstinRules.ExtendItemCount(ApplyExtendCount + 1, EvaluateExtendFormula);
             snapshot = Capture();
+        }
+
+        if (!BypassChargesForTests &&
+            !TryConsumeTemplate(BlessUthstinRules.ExtendItemId, need, ItemTaskType.BlessUthstinExpandMaxStats))
+            return false;
+
+        lock (_sync)
+        {
             ExtendMaxStats += BlessUthstinRules.ExtendPerPoint;
             ApplyExtendCount++;
         }
@@ -324,14 +349,13 @@ public sealed class CharacterBlessUthstin
         if (!TryPersist())
         {
             Restore(snapshot);
-            return false;
-        }
+            if (!TryRefundTemplate(BlessUthstinRules.ExtendItemId, need, ItemTaskType.BlessUthstinExpandMaxStats))
+            {
+                Logger.Error(
+                    "BlessUthstin extend persist failed and the item refund did not land for {0}",
+                    Owner.Name);
+            }
 
-        if (!BypassChargesForTests &&
-            !TryConsumeTemplate(BlessUthstinRules.ExtendItemId, need, ItemTaskType.BlessUthstinExpandMaxStats))
-        {
-            Restore(snapshot);
-            TryPersist();
             return false;
         }
         Owner.SendPacket(new SCBlessUthstinExtendMaxStatsPacket(
@@ -360,6 +384,14 @@ public sealed class CharacterBlessUthstin
                 return false;
 
             snapshot = Capture();
+        }
+
+        if (!BypassChargesForTests &&
+            !TryConsumeTemplate(BlessUthstinRules.ExpandItemId, need, ItemTaskType.BlessUthstinExpandPage))
+            return false;
+
+        lock (_sync)
+        {
             Pages.Add(new BlessUthstinPage());
             newIndex = Pages.Count - 1;
         }
@@ -367,14 +399,13 @@ public sealed class CharacterBlessUthstin
         if (!TryPersist())
         {
             Restore(snapshot);
-            return false;
-        }
+            if (!TryRefundTemplate(BlessUthstinRules.ExpandItemId, need, ItemTaskType.BlessUthstinExpandPage))
+            {
+                Logger.Error(
+                    "BlessUthstin expand persist failed and the item refund did not land for {0}",
+                    Owner.Name);
+            }
 
-        if (!BypassChargesForTests &&
-            !TryConsumeTemplate(BlessUthstinRules.ExpandItemId, need, ItemTaskType.BlessUthstinExpandPage))
-        {
-            Restore(snapshot);
-            TryPersist();
             return false;
         }
         Owner.SendPacket(new SCBlessUthstinExpandPagePacket(Owner.ObjId, true, newIndex));
@@ -386,6 +417,7 @@ public sealed class CharacterBlessUthstin
         if (!FeatureOn(requirePageOps: true) || Owner == null)
             return false;
 
+        BlessUthstinPage src;
         BlessUthstinPage dest;
         long cost;
         BlessSnapshot snapshot;
@@ -393,11 +425,18 @@ public sealed class CharacterBlessUthstin
         {
             if (srcPageIndex == dstPageIndex)
                 return false;
-            if (!TryGetPage(srcPageIndex, out var src) || !TryGetPage(dstPageIndex, out dest))
+            if (!TryGetPage(srcPageIndex, out src) || !TryGetPage(dstPageIndex, out dest))
                 return false;
 
             cost = BlessUthstinRules.CopyCost(BlessUthstinRules.PositiveApplied(src));
             snapshot = Capture();
+        }
+
+        if (!TryCharge(cost, ItemTaskType.BlessUthstinCopyPage))
+            return false;
+
+        lock (_sync)
+        {
             dest.CopyFrom(src);
             if (_pending?.PageIndex == dstPageIndex)
                 _pending = null;
@@ -406,13 +445,13 @@ public sealed class CharacterBlessUthstin
         if (!TryPersist())
         {
             Restore(snapshot);
-            return false;
-        }
+            if (!TryRefundMoney(cost, ItemTaskType.BlessUthstinCopyPage))
+            {
+                Logger.Error(
+                    "BlessUthstin copy persist failed and the gold refund did not land for {0}",
+                    Owner.Name);
+            }
 
-        if (!TryCharge(cost, ItemTaskType.BlessUthstinCopyPage))
-        {
-            Restore(snapshot);
-            TryPersist();
             return false;
         }
         RefreshModifiersIfSelected(dstPageIndex);
@@ -437,19 +476,24 @@ public sealed class CharacterBlessUthstin
 
             cost = BlessUthstinRules.SelectCost(Owner.Level);
             snapshot = Capture();
-            SelectPageIndex = pageIndex;
         }
+
+        if (!TryCharge(cost, ItemTaskType.BlessUthstinSelectPage))
+            return false;
+
+        lock (_sync)
+            SelectPageIndex = pageIndex;
 
         if (!TryPersist())
         {
             Restore(snapshot);
-            return false;
-        }
+            if (!TryRefundMoney(cost, ItemTaskType.BlessUthstinSelectPage))
+            {
+                Logger.Error(
+                    "BlessUthstin select persist failed and the gold refund did not land for {0}",
+                    Owner.Name);
+            }
 
-        if (!TryCharge(cost, ItemTaskType.BlessUthstinSelectPage))
-        {
-            Restore(snapshot);
-            TryPersist();
             return false;
         }
         ApplyModifiers();
@@ -652,6 +696,20 @@ public sealed class CharacterBlessUthstin
         if (BypassChargesForTests || cost <= 0)
             return true;
         return Owner.ChangeMoney(SlotType.Inventory, -cost, task);
+    }
+
+    private bool TryRefundMoney(long cost, ItemTaskType task)
+    {
+        if (BypassChargesForTests || cost <= 0)
+            return true;
+        return Owner.ChangeMoney(SlotType.Inventory, cost, task);
+    }
+
+    private bool TryRefundTemplate(uint templateId, int count, ItemTaskType task)
+    {
+        if (BypassChargesForTests || count <= 0)
+            return true;
+        return Owner.Inventory.Bag.AcquireDefaultItem(task, templateId, count);
     }
 
     private bool TryConsumeTemplate(uint templateId, int count, ItemTaskType task)

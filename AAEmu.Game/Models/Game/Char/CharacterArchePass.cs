@@ -41,6 +41,9 @@ public sealed class CharacterArchePass
     /// <summary>Tests force the next persist to fail and then clear this flag.</summary>
     public bool FailNextPersist { get; set; }
 
+    /// <summary>Tests force the next reward grant to fail and then clear this flag.</summary>
+    public bool FailNextGrant { get; set; }
+
     public void Bind(Character owner) => Owner = owner;
 
     public IReadOnlyList<ArchePassProgress> Snapshot()
@@ -128,6 +131,10 @@ public sealed class CharacterArchePass
             }
 
             snapshot = ClonePasses();
+            if (!BypassChargesForTests &&
+                !Owner.TryPayCurrency(desc.CurrencyId, desc.CurrencyValue, false, ItemTaskType.ArchePassBuy))
+                return false;
+
             row = existing ?? new ArchePassProgress { PassId = passId };
             row.PassId = passId;
             row.Status = ArchePassStatus.Owned;
@@ -141,14 +148,14 @@ public sealed class CharacterArchePass
         if (!TryPersist())
         {
             RestorePasses(snapshot);
-            return false;
-        }
+            if (!BypassChargesForTests &&
+                !Owner.TryRefundCurrency(desc.CurrencyId, desc.CurrencyValue, ItemTaskType.ArchePassBuy))
+            {
+                Logger.Error(
+                    "ArchePass buy persist failed and the currency refund did not land for {0}",
+                    Owner.Name);
+            }
 
-        if (!BypassChargesForTests &&
-            !Owner.TryPayCurrency(desc.CurrencyId, desc.CurrencyValue, false, ItemTaskType.ArchePassBuy))
-        {
-            RestorePasses(snapshot);
-            TryPersist();
             return false;
         }
 
@@ -267,20 +274,24 @@ public sealed class CharacterArchePass
             }
 
             snapshot = ClonePasses();
+            if (!BypassChargesForTests &&
+                !TryConsume(desc.UpgradeItemId, 1, ItemTaskType.ArchePassUpgrade))
+                return false;
+
             row.Premium = true;
         }
 
         if (!TryPersist())
         {
             RestorePasses(snapshot);
-            return false;
-        }
+            if (!BypassChargesForTests &&
+                !TryGrant(desc.UpgradeItemId, 1, ItemTaskType.ArchePassUpgrade))
+            {
+                Logger.Error(
+                    "ArchePass upgrade persist failed and the item refund did not land for {0}",
+                    Owner.Name);
+            }
 
-        if (!BypassChargesForTests &&
-            !TryConsume(desc.UpgradeItemId, 1, ItemTaskType.ArchePassUpgrade))
-        {
-            RestorePasses(snapshot);
-            TryPersist();
             return false;
         }
         SendUpdate(row, ArchePassUpdateReason.UpgradePremium);
@@ -385,10 +396,16 @@ public sealed class CharacterArchePass
 
         var itemId = premium ? reward.PremiumRewardItemId : reward.RewardItemId;
         var count = premium ? reward.PremiumRewardItemCount : reward.RewardItemCount;
-        if (!BypassChargesForTests && !TryGrant(itemId, count, ItemTaskType.ArchePassReward))
+        if ((!BypassChargesForTests || FailNextGrant) &&
+            !TryGrant(itemId, count, ItemTaskType.ArchePassReward))
         {
-            RestorePasses(snapshot);
-            TryPersist();
+            if (!RevertPersistedPasses(snapshot))
+            {
+                Logger.Error(
+                    "ArchePass claim grant failed and the compensating persist did not land for {0}",
+                    Owner.Name);
+            }
+
             return false;
         }
         if (row.Status == ArchePassStatus.Completed)
@@ -478,7 +495,15 @@ public sealed class CharacterArchePass
                 _missionWeekStart = previousWeek;
             }
 
-            TryPersistMissions();
+            if (!TryPersistMissions())
+            {
+                lock (_sync)
+                    _missionChangeUsed = used + 1;
+                Logger.Error(
+                    "ArchePass change-mission grant failed and the compensating persist did not land for {0}",
+                    Owner.Name);
+            }
+
             return false;
         }
         Owner.SendPacket(new SCArchePassChangeMissionPacket((uint)_missionChangeUsed));
@@ -650,6 +675,12 @@ public sealed class CharacterArchePass
 
     private bool TryGrant(uint templateId, int count, ItemTaskType task)
     {
+        if (FailNextGrant)
+        {
+            FailNextGrant = false;
+            return false;
+        }
+
         if (count <= 0 || templateId == 0)
             return false;
         if (!Owner.Inventory.Bag.AcquireDefaultItem(task, templateId, count))
@@ -676,6 +707,18 @@ public sealed class CharacterArchePass
 
     private Dictionary<uint, ArchePassProgress> ClonePasses() =>
         _passes.ToDictionary(pair => pair.Key, pair => pair.Value.Clone());
+
+    private bool RevertPersistedPasses(Dictionary<uint, ArchePassProgress> snapshot)
+    {
+        var committed = ClonePasses();
+        RestorePasses(snapshot);
+        var rollbackOk = TryPersist();
+        if (!DurableRewardRules.KeepClaim(false, false, rollbackOk))
+            return true;
+
+        RestorePasses(committed);
+        return false;
+    }
 
     private void RestorePasses(Dictionary<uint, ArchePassProgress> snapshot)
     {

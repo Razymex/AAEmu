@@ -959,17 +959,7 @@ public class Inventory
                 ItemWalletRules.CreditOnAcquire(item.TemplateId, container.ContainerType) &&
                 Owner is Character character)
             {
-                if (!ItemWallet.CreditLoyalty(character, count))
-                    return;
-                var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, item.TemplateId, count, item);
-                var refund = ItemWalletRules.RefundAfterPartialConsume(count, consumed);
-                if (refund > 0)
-                    AccountManager.Instance.AddLoyalty(character.AccountId, -refund);
-                if (consumed > 0 || refund > 0)
-                {
-                    character.BmPoint = AccountManager.Instance.GetAccountDetails(character.AccountId).Loyalty;
-                    character.SendPacket(new SCBmPointPacket(character.BmPoint));
-                }
+                ItemWallet.ConsumeThenCreditLoyalty(character, container, item.TemplateId, count, item);
                 return;
             }
 

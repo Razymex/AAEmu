@@ -2533,6 +2533,31 @@ public partial class Character : Unit, ICharacter
         }
     }
 
+    public bool TryRefundCurrency(uint currencyId, long price, ItemTaskType itemTaskType)
+    {
+        if (price <= 0)
+            return true;
+
+        switch ((ContentCurrencyType)currencyId)
+        {
+            case ContentCurrencyType.Gold:
+            case ContentCurrencyType.GoldWithAaPoint:
+                return ChangeMoney(SlotType.Inventory, price, itemTaskType);
+            case ContentCurrencyType.AaPoint:
+                return ChangeAAPoint(SlotType.None, SlotType.Inventory, price, itemTaskType);
+            case ContentCurrencyType.HonorPoint:
+                ChangeGamePoints(GamePointKind.Honor, (int)price);
+                return true;
+            case ContentCurrencyType.LivingPoint:
+                ChangeGamePoints(GamePointKind.Vocation, (int)price);
+                return true;
+            case ContentCurrencyType.ContributionPoint:
+                return ExpeditionManager.Instance.TryChangeContributionPoints(this, (int)price, false);
+            default:
+                return false;
+        }
+    }
+
     public void ChangeLabor(short change, int actabilityId)
     {
         var actabilityChange = 0;

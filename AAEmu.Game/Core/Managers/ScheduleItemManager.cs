@@ -78,12 +78,18 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
                 continue;
             }
 
-            if (!TryGrant(character, def, out var byMail))
+            if (!TryGrant(character, def, out var byMail, out var deliveredAny))
             {
-                progress.Gave = previousGave;
-                progress.Cumulated = previousCumulated;
-                progress.Updated = previousUpdated;
-                TryPersist(character.AccountId, def.Id, progress);
+                if (deliveredAny)
+                {
+                    Logger.Warn(
+                        "Schedule item leftover grant failed after a partial delivery id={0} name={1}",
+                        def.Id,
+                        character.Name);
+                    continue;
+                }
+
+                RevertGave(progress, previousGave, previousCumulated, previousUpdated, character.AccountId, def.Id);
                 continue;
             }
             Logger.Info(
@@ -165,12 +171,18 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
             return;
         }
 
-        if (!TryGrant(character, def, out var byMail))
+        if (!TryGrant(character, def, out var byMail, out var deliveredAny))
         {
-            progress.Gave = previousGave;
-            progress.Cumulated = previousCumulated;
-            progress.Updated = previousUpdated;
-            TryPersist(character.AccountId, scheduleId, progress);
+            if (deliveredAny)
+            {
+                Logger.Warn(
+                    "Schedule item leftover grant failed after a partial delivery id={0} name={1}",
+                    scheduleId,
+                    character.Name);
+                return;
+            }
+
+            RevertGave(progress, previousGave, previousCumulated, previousUpdated, character.AccountId, scheduleId);
             return;
         }
 
@@ -206,15 +218,43 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
             Updated = progress.Updated
         };
 
-    private static bool TryGrant(Character character, ScheduleItemDef def, out bool byMail)
+    private static void RevertGave(
+        Progress progress,
+        byte previousGave,
+        long previousCumulated,
+        DateTime previousUpdated,
+        uint accountId,
+        int scheduleId)
+    {
+        var committedGave = progress.Gave;
+        var committedCumulated = progress.Cumulated;
+        var committedUpdated = progress.Updated;
+        progress.Gave = previousGave;
+        progress.Cumulated = previousCumulated;
+        progress.Updated = previousUpdated;
+        var rollbackOk = TryPersist(accountId, scheduleId, progress);
+        if (!DurableRewardRules.KeepClaim(false, false, rollbackOk))
+            return;
+
+        progress.Gave = committedGave;
+        progress.Cumulated = committedCumulated;
+        progress.Updated = committedUpdated;
+        Logger.Error("Schedule item grant failed and the compensating write did not land id={0}", scheduleId);
+    }
+
+    private static bool TryGrant(Character character, ScheduleItemDef def, out bool byMail, out bool deliveredAny)
     {
         byMail = false;
+        deliveredAny = false;
         if (character.Inventory.Bag.SpaceLeftForItem(def.ItemId) >= def.ItemCount)
         {
-            return character.Inventory.Bag.AcquireDefaultItem(
-                ItemTaskType.TakeScheduleItem,
-                def.ItemId,
-                def.ItemCount);
+            if (!character.Inventory.Bag.AcquireDefaultItem(
+                    ItemTaskType.TakeScheduleItem,
+                    def.ItemId,
+                    def.ItemCount))
+                return false;
+            deliveredAny = true;
+            return true;
         }
 
         if (string.IsNullOrEmpty(def.MailTitle) || string.IsNullOrEmpty(def.MailBody))
@@ -248,6 +288,7 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
                 character.Id))
             return false;
 
+        deliveredAny = true;
         mail.Body.Attachments.AddRange(added);
         if (!mail.Send())
             return false;

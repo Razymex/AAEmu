@@ -37,4 +37,10 @@ public static class ItemWalletRules
         var kept = Math.Max(0, consumed);
         return kept >= credited ? 0 : credited - kept;
     }
+
+    /// <summary>
+    /// Consume-first convert: put the removed count back when the wallet write misses.
+    /// </summary>
+    public static int RestoreAfterFailedCredit(int consumed, bool creditOk) =>
+        !creditOk && consumed > 0 ? consumed : 0;
 }
