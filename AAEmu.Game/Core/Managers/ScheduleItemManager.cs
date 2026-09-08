@@ -49,7 +49,7 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
 
         character.SendPacket(new SCScheduleItemUpdatePacket(items));
         AutoGrantSilent(character, now);
-        Logger.Info("Schedule items sent account={0} count={1}", character.AccountId, items.Count);
+        Logger.Info("Schedule items sent {0} count={1}", character.Name, items.Count);
     }
 
     private void AutoGrantSilent(Character character, DateTime now)
@@ -87,8 +87,8 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
                 continue;
             }
             Logger.Info(
-                "Schedule item auto-granted account={0} id={1} item={2} x{3} byMail={4}",
-                character.AccountId,
+                "Schedule item auto-granted {0} id={1} item={2} x{3} byMail={4}",
+                character.Name,
                 def.Id,
                 def.ItemId,
                 def.ItemCount,
@@ -177,8 +177,8 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         character.SendPacket(new SCScheduleItemSentPacket(scheduleId, byMail));
         SendActive(character);
         Logger.Info(
-            "Schedule item claimed account={0} id={1} gave={2}/{3} byMail={4}",
-            character.AccountId,
+            "Schedule item claimed {0} id={1} gave={2}/{3} byMail={4}",
+            character.Name,
             scheduleId,
             progress.Gave,
             def.GiveMax,
@@ -295,7 +295,7 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Schedule item Load failed account={0} id={1}", accountId, scheduleId);
+            Logger.Error(ex, "Schedule item Load failed id={0}", scheduleId);
             return false;
         }
 
@@ -338,12 +338,12 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         }
         catch (MySqlException ex) when (ex.Number is 1146 or 1054)
         {
-            Logger.Warn("Schedule item Persist skipped (table missing): account={0} id={1}", accountId, scheduleId);
+            Logger.Warn("Schedule item Persist skipped (table missing) id={0}", scheduleId);
             return false;
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Schedule item Persist failed account={0} id={1}", accountId, scheduleId);
+            Logger.Error(ex, "Schedule item Persist failed id={0}", scheduleId);
             return false;
         }
     }

@@ -75,11 +75,11 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         if (daily == null)
         {
             Logger.Warn(
-                "Account attendance: no daily reward for {0}-{1:00} dayCount={2} account={3}",
+                "Account attendance: no daily reward for {0}-{1:00} dayCount={2} name={3}",
                 day.Year,
                 day.Month,
                 AccountAttendanceRules.NextDayCount(claims.Count),
-                character.AccountId);
+                character.Name);
             character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
             return;
         }
@@ -114,8 +114,8 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         character.SendPacket(new SCAccountAttendanceRewardedPacket(0, byMail));
         SendMonth(character);
         Logger.Info(
-            "Account attendance claimed account={0} {1}-{2:00}-{3:00} archelife={4} byMail={5}",
-            character.AccountId,
+            "Account attendance claimed {0} {1}-{2:00}-{3:00} archelife={4} byMail={5}",
+            character.Name,
             day.Year,
             day.Month,
             day.Day,
@@ -234,7 +234,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Account attendance LoadMonth failed for account {0}", accountId);
+            Logger.Error(ex, "Account attendance LoadMonth failed {0}-{1:00}", year, month);
             return false;
         }
 
@@ -266,14 +266,12 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         }
         catch (MySqlException ex) when (ex.Number is 1146 or 1054)
         {
-            Logger.Warn(
-                "Account attendance Persist skipped (table missing): account={0}",
-                accountId);
+            Logger.Warn("Account attendance Persist skipped (table missing)");
             return false;
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Account attendance Persist failed account={0}", accountId);
+            Logger.Error(ex, "Account attendance Persist failed {0}-{1:00}-{2:00}", year, month, day);
             return false;
         }
     }
@@ -299,7 +297,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Account attendance RemoveClaim failed account={0}", accountId);
+            Logger.Error(ex, "Account attendance RemoveClaim failed {0}-{1:00}-{2:00}", year, month, day);
             return false;
         }
     }
