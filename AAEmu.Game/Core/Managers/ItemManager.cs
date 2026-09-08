@@ -1743,7 +1743,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                     if (c.ContainerId <= 0)
                         continue;
 
-                    if (c.IsDirty == false)
+                    if (!c.TryCaptureDirtyStamp(out var stamp))
                         continue;
 
                     command.CommandText = "REPLACE INTO item_containers (" +
@@ -1768,7 +1768,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
                     containerUpdateCount += res;
                     t_writtenContainers ??= [];
-                    t_writtenContainers.Add((c, c.DirtyStamp));
+                    t_writtenContainers.Add((c, stamp));
                 }
             }
         }
@@ -1816,7 +1816,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         continue;
                     }
 
-                    if (!item.IsDirty)
+                    if (!item.TryCaptureDirtyStamp(out var stamp))
                         continue;
 
                     var details = new Commons.Network.PacketStream();
@@ -1858,7 +1858,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         throw new InvalidOperationException($"Item {item.Id} ({item.TemplateId}) was not written");
 
                     t_writtenItems ??= [];
-                    t_writtenItems.Add((item, item.DirtyStamp));
+                    t_writtenItems.Add((item, stamp));
                     updateCount++;
                     command.Parameters.Clear();
                 }
@@ -1873,19 +1873,13 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         if (t_writtenItems != null)
         {
             foreach (var (item, stamp) in t_writtenItems)
-            {
-                if (AccountLiveDirty.ShouldClear(stamp, item.DirtyStamp))
-                    item.IsDirty = false;
-            }
+                item.TryClearDirty(stamp);
         }
 
         if (t_writtenContainers != null)
         {
             foreach (var (container, stamp) in t_writtenContainers)
-            {
-                if (AccountLiveDirty.ShouldClear(stamp, container.DirtyStamp))
-                    container.IsDirty = false;
-            }
+                container.TryClearDirty(stamp);
         }
 
         if (t_removedWritten != null)
@@ -1938,6 +1932,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
             if (!MailDeliveryRules.CanPersistAttachment(item))
                 throw new InvalidOperationException($"Mail attachment {item?.Id} is not mail-owned");
 
+            var stamp = item.DirtyStamp;
             var details = new Commons.Network.PacketStream();
             item.WriteDetails(details);
 
@@ -1967,7 +1962,7 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
             if (command.ExecuteNonQuery() < 1)
                 throw new InvalidOperationException($"Mail attachment {item.Id} did not write");
 
-            item.IsDirty = false;
+            item.TryClearDirty(stamp);
             written++;
         }
 

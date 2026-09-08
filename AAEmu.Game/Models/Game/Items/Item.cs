@@ -1,4 +1,5 @@
 using AAEmu.Commons.Network;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items.Containers;
 using AAEmu.Game.Models.Game.Items.Templates;
 using Newtonsoft.Json;
@@ -23,7 +24,7 @@ public class Item : PacketMarshaler, IComparable<Item>
     private DateTime _unsecureTime;
     private DateTime _unpackTime;
     private uint _imageItemTemplateId;
-    private bool _isDirty;
+    private readonly LiveDirtyGate _dirty = new();
     private ulong _uccId;
     private DateTime _expirationTime;
     private double _expirationOnlineMinutesLeft;
@@ -31,26 +32,20 @@ public class Item : PacketMarshaler, IComparable<Item>
     private int _chargeCount;
 
     [JsonIgnore]
-    public int DirtyStamp { get; private set; }
+    public int DirtyStamp => _dirty.Stamp;
 
     [JsonIgnore]
     public bool IsDirty
     {
-        get => _isDirty;
-        set
-        {
-            if (value)
-                MarkDirty();
-            else
-                _isDirty = false;
-        }
+        get => _dirty.IsDirty;
+        set => _dirty.IsDirty = value;
     }
 
-    private void MarkDirty()
-    {
-        _isDirty = true;
-        DirtyStamp++;
-    }
+    public bool TryCaptureDirtyStamp(out int stamp) => _dirty.TryCapture(out stamp);
+
+    public bool TryClearDirty(int writtenStamp) => _dirty.TryClear(writtenStamp);
+
+    private void MarkDirty() => _dirty.Mark();
 
     /// <summary>
     /// Staged on an uncommitted delivery. The periodic world save must not write this

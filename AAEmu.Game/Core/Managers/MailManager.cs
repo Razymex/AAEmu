@@ -478,11 +478,13 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
         foreach (var mtbs in _allPlayerMails)
         {
-            if (!mtbs.Value.IsDirty || !MailDeliveryRules.IsPublished(mtbs.Value))
+            if (!MailDeliveryRules.IsPublished(mtbs.Value))
+                continue;
+            if (!mtbs.Value.TryCaptureDirtyStamp(out var stamp))
                 continue;
             WriteMail(mtbs.Value, connection, transaction);
             t_writtenMails ??= [];
-            t_writtenMails.Add((mtbs.Value, mtbs.Value.DirtyStamp));
+            t_writtenMails.Add((mtbs.Value, stamp));
             updatedCount++;
         }
 
@@ -536,7 +538,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         }
 
         command.Prepare();
-        command.ExecuteNonQuery();
+        if (command.ExecuteNonQuery() < 1)
+            throw new InvalidOperationException($"Mail {mail.Id} was not written");
     }
 
     public void ConfirmSaved()
@@ -544,10 +547,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         if (t_writtenMails != null)
         {
             foreach (var (mail, stamp) in t_writtenMails)
-            {
-                if (AccountLiveDirty.ShouldClear(stamp, mail.DirtyStamp))
-                    mail.IsDirty = false;
-            }
+                mail.TryClearDirty(stamp);
         }
 
         if (t_deletedWritten != null)

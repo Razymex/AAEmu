@@ -30,9 +30,10 @@ public class AccountLiveDirtyTests
     public async Task DirtyStamp_KeepsAChangeMadeAfterTheWrite()
     {
         var mail = new AAEmu.Game.Models.Game.Mails.BaseMail();
-        var written = mail.DirtyStamp;
+        await Assert.That(mail.TryCaptureDirtyStamp(out var written)).IsTrue();
         mail.Title = "after write";
         await Assert.That(AccountLiveDirty.ShouldClear(written, mail.DirtyStamp)).IsFalse();
+        await Assert.That(mail.TryClearDirty(written)).IsFalse();
         await Assert.That(mail.IsDirty).IsTrue();
     }
 }

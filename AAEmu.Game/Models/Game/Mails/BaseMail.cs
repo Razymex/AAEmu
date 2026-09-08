@@ -1,4 +1,5 @@
 ﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items;
 
 namespace AAEmu.Game.Models.Game.Mails;
@@ -9,7 +10,7 @@ public class BaseMail
     private MailType _mailType;
     private string _title;
     private string _receiverName;
-    private bool _isDirty;
+    private readonly LiveDirtyGate _dirty = new();
     private MailHeader _header;
     private MailBody _body;
     private DateTime _openDate;
@@ -25,25 +26,19 @@ public class BaseMail
 
     // Local helpers
     public bool IsDelivered { get; set; }
-    public int DirtyStamp { get; private set; }
+    public int DirtyStamp => _dirty.Stamp;
 
     public bool IsDirty
     {
-        get => _isDirty;
-        set
-        {
-            if (value)
-                MarkDirty();
-            else
-                _isDirty = false;
-        }
+        get => _dirty.IsDirty;
+        set => _dirty.IsDirty = value;
     }
 
-    private void MarkDirty()
-    {
-        _isDirty = true;
-        DirtyStamp++;
-    }
+    public bool TryCaptureDirtyStamp(out int stamp) => _dirty.TryCapture(out stamp);
+
+    public bool TryClearDirty(int writtenStamp) => _dirty.TryClear(writtenStamp);
+
+    private void MarkDirty() => _dirty.Mark();
 
     /// <summary>
     /// Staged on a caller transaction that has not committed. Mailbox list, claim, and

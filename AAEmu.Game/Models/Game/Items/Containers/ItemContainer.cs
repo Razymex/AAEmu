@@ -1,4 +1,5 @@
 using AAEmu.Commons.Exceptions;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -21,19 +22,18 @@ public class ItemContainer
     private int _freeSlotCount;
     private ICharacter _owner;
     private uint _ownerId;
-    private bool _isDirty;
-    public int DirtyStamp { get; private set; }
+    private readonly LiveDirtyGate _dirty = new();
+    public int DirtyStamp => _dirty.Stamp;
 
     public bool IsDirty
     {
-        get => _isDirty;
-        set
-        {
-            _isDirty = value;
-            if (value)
-                DirtyStamp++;
-        }
+        get => _dirty.IsDirty;
+        set => _dirty.IsDirty = value;
     }
+
+    public bool TryCaptureDirtyStamp(out int stamp) => _dirty.TryCapture(out stamp);
+
+    public bool TryClearDirty(int writtenStamp) => _dirty.TryClear(writtenStamp);
     private readonly SlotType _containerType;
     private ulong _containerId;
 
