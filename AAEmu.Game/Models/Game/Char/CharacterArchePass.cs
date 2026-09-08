@@ -38,6 +38,9 @@ public sealed class CharacterArchePass
     /// <summary>Tests skip currency, item consume, item grant, and MySQL.</summary>
     public bool BypassChargesForTests { get; set; }
 
+    /// <summary>Tests force the next persist to fail and then clear this flag.</summary>
+    public bool FailNextPersist { get; set; }
+
     public void Bind(Character owner) => Owner = owner;
 
     public IReadOnlyList<ArchePassProgress> Snapshot()
@@ -103,6 +106,7 @@ public sealed class CharacterArchePass
         }
 
         ArchePassProgress row;
+        Dictionary<uint, ArchePassProgress> snapshot;
         lock (_sync)
         {
             var current = _passes.TryGetValue(passId, out var existing)
@@ -123,10 +127,7 @@ public sealed class CharacterArchePass
                 return false;
             }
 
-            if (!BypassChargesForTests &&
-                !Owner.TryPayCurrency(desc.CurrencyId, desc.CurrencyValue, false, ItemTaskType.ArchePassBuy))
-                return false;
-
+            snapshot = ClonePasses();
             row = existing ?? new ArchePassProgress { PassId = passId };
             row.PassId = passId;
             row.Status = ArchePassStatus.Owned;
@@ -137,7 +138,20 @@ public sealed class CharacterArchePass
             _passes[passId] = row;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            RestorePasses(snapshot);
+            return false;
+        }
+
+        if (!BypassChargesForTests &&
+            !Owner.TryPayCurrency(desc.CurrencyId, desc.CurrencyValue, false, ItemTaskType.ArchePassBuy))
+        {
+            RestorePasses(snapshot);
+            TryPersist();
+            return false;
+        }
+
         SendUpdate(row, ArchePassUpdateReason.Buy);
         Logger.Info("ArchePass buy {0}: type={1} name={2} currency={3} value={4}",
             Owner.Name, passId, desc.Name, desc.CurrencyId, desc.CurrencyValue);
@@ -157,6 +171,7 @@ public sealed class CharacterArchePass
 
         ArchePassProgress row;
         ArchePassProgress previous = null;
+        Dictionary<uint, ArchePassProgress> snapshot;
         lock (_sync)
         {
             if (!_passes.TryGetValue(passId, out row) || !ArchePassRules.CanStart(row.Status))
@@ -165,6 +180,7 @@ public sealed class CharacterArchePass
                 return false;
             }
 
+            snapshot = ClonePasses();
             foreach (var pass in _passes.Values)
             {
                 if (pass.PassId == passId || pass.Status != ArchePassStatus.Progress)
@@ -176,7 +192,11 @@ public sealed class CharacterArchePass
             row.Status = ArchePassStatus.Progress;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            RestorePasses(snapshot);
+            return false;
+        }
         if (previous != null)
         {
             SendUpdate(previous, ArchePassUpdateReason.Owned);
@@ -200,6 +220,7 @@ public sealed class CharacterArchePass
         }
 
         ArchePassProgress row;
+        Dictionary<uint, ArchePassProgress> snapshot;
         lock (_sync)
         {
             if (!_passes.TryGetValue(passId, out row) || !ArchePassRules.CanRemove(row.Status))
@@ -208,10 +229,15 @@ public sealed class CharacterArchePass
                 return false;
             }
 
+            snapshot = ClonePasses();
             row.Status = ArchePassStatus.Dropped;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            RestorePasses(snapshot);
+            return false;
+        }
         SendUpdate(row, ArchePassUpdateReason.Dropped);
         Logger.Info("ArchePass remove {0}: type={1} name={2}", Owner.Name, passId, desc.Name);
         return true;
@@ -224,6 +250,7 @@ public sealed class CharacterArchePass
 
         ArchePassProgress row;
         ArchePassDesc desc;
+        Dictionary<uint, ArchePassProgress> snapshot;
         lock (_sync)
         {
             row = LiveProgress();
@@ -239,14 +266,23 @@ public sealed class CharacterArchePass
                 return false;
             }
 
-            if (!BypassChargesForTests &&
-                !TryConsume(desc.UpgradeItemId, 1, ItemTaskType.ArchePassUpgrade))
-                return false;
-
+            snapshot = ClonePasses();
             row.Premium = true;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            RestorePasses(snapshot);
+            return false;
+        }
+
+        if (!BypassChargesForTests &&
+            !TryConsume(desc.UpgradeItemId, 1, ItemTaskType.ArchePassUpgrade))
+        {
+            RestorePasses(snapshot);
+            TryPersist();
+            return false;
+        }
         SendUpdate(row, ArchePassUpdateReason.UpgradePremium);
         Logger.Info("ArchePass upgrade {0}: type={1} item={2}", Owner.Name, row.PassId, desc.UpgradeItemId);
         return true;
@@ -265,6 +301,7 @@ public sealed class CharacterArchePass
 
         var maxTier = ArchePassGameData.Instance.MaxTier(passId);
         ArchePassProgress row;
+        Dictionary<uint, ArchePassProgress> snapshot;
         lock (_sync)
         {
             if (!_passes.TryGetValue(passId, out row)
@@ -274,10 +311,15 @@ public sealed class CharacterArchePass
                 return false;
             }
 
+            snapshot = ClonePasses();
             row.Status = ArchePassStatus.Completed;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            RestorePasses(snapshot);
+            return false;
+        }
         SendUpdate(row, ArchePassUpdateReason.Completed, allDone: false);
         SendCompletedWord(passId);
         Logger.Info("ArchePass complete {0}: type={1} name={2}", Owner.Name, passId, desc.Name);
@@ -292,6 +334,7 @@ public sealed class CharacterArchePass
         ArchePassProgress row;
         ArchePassTierDesc reward;
         uint maxTier;
+        Dictionary<uint, ArchePassProgress> snapshot;
         lock (_sync)
         {
             row = LiveProgress();
@@ -324,11 +367,7 @@ public sealed class CharacterArchePass
                 return false;
             }
 
-            var itemId = premium ? reward.PremiumRewardItemId : reward.RewardItemId;
-            var count = premium ? reward.PremiumRewardItemCount : reward.RewardItemCount;
-            if (!BypassChargesForTests && !TryGrant(itemId, count, ItemTaskType.ArchePassReward))
-                return false;
-
+            snapshot = ClonePasses();
             if (premium)
                 row.LastPremiumRewardTier = reward.Tier;
             else
@@ -338,7 +377,20 @@ public sealed class CharacterArchePass
                 row.Status = ArchePassStatus.Completed;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            RestorePasses(snapshot);
+            return false;
+        }
+
+        var itemId = premium ? reward.PremiumRewardItemId : reward.RewardItemId;
+        var count = premium ? reward.PremiumRewardItemCount : reward.RewardItemCount;
+        if (!BypassChargesForTests && !TryGrant(itemId, count, ItemTaskType.ArchePassReward))
+        {
+            RestorePasses(snapshot);
+            TryPersist();
+            return false;
+        }
         if (row.Status == ArchePassStatus.Completed)
         {
             SendUpdate(row, ArchePassUpdateReason.Completed, allDone: true);
@@ -361,6 +413,7 @@ public sealed class CharacterArchePass
             return false;
 
         ArchePassProgress row;
+        Dictionary<uint, ArchePassProgress> snapshot;
         lock (_sync)
         {
             row = LiveProgress();
@@ -370,10 +423,15 @@ public sealed class CharacterArchePass
                 return false;
             }
 
+            snapshot = ClonePasses();
             row.Point += amount;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            RestorePasses(snapshot);
+            return false;
+        }
         SendUpdate(row, ArchePassUpdateReason.Point, diffPoint: amount);
         Logger.Info("ArchePass add-point {0}: type={1} +{2} total={3}",
             Owner.Name, row.PassId, amount, row.Point);
@@ -388,6 +446,8 @@ public sealed class CharacterArchePass
         EnsureMissionWeek();
         int used;
         int max;
+        int previousUsed;
+        DateTime previousWeek;
         lock (_sync)
         {
             used = _missionChangeUsed;
@@ -397,15 +457,30 @@ public sealed class CharacterArchePass
                 Logger.Info("ArchePass change-mission {0}: {1}/{2}", Owner.Name, used, max);
                 return false;
             }
+
+            previousUsed = used;
+            previousWeek = _missionWeekStart;
+            _missionChangeUsed = used + 1;
+        }
+
+        if (!TryPersistMissions())
+        {
+            lock (_sync)
+                _missionChangeUsed = previousUsed;
+            return false;
         }
 
         if (!TodayAssignmentManager.Instance.TryRerollProgress(Owner, realStep, requireArchePassBoard: true))
+        {
+            lock (_sync)
+            {
+                _missionChangeUsed = previousUsed;
+                _missionWeekStart = previousWeek;
+            }
+
+            TryPersistMissions();
             return false;
-
-        lock (_sync)
-            _missionChangeUsed = used + 1;
-
-        PersistMissions();
+        }
         Owner.SendPacket(new SCArchePassChangeMissionPacket((uint)_missionChangeUsed));
         Logger.Info("ArchePass change-mission {0}: realStep={1} used={2}/{3}",
             Owner.Name, realStep, _missionChangeUsed, max);
@@ -419,14 +494,21 @@ public sealed class CharacterArchePass
 
         EnsureMissionWeek();
         var max = ArchePassRules.MissionCompleteMax;
+        int previousUsed;
         lock (_sync)
         {
             if (_missionCompleteUsed >= max)
                 return;
+            previousUsed = _missionCompleteUsed;
             _missionCompleteUsed++;
         }
 
-        PersistMissions();
+        if (!TryPersistMissions())
+        {
+            lock (_sync)
+                _missionCompleteUsed = previousUsed;
+            return;
+        }
         Owner.SendPacket(new SCArchePassMissionCountPacket((uint)_missionCompleteUsed));
         Logger.Info("ArchePass mission-complete {0}: used={1}/{2}", Owner.Name, _missionCompleteUsed, max);
     }
@@ -592,10 +674,29 @@ public sealed class CharacterArchePass
         }
     }
 
-    private void Persist()
+    private Dictionary<uint, ArchePassProgress> ClonePasses() =>
+        _passes.ToDictionary(pair => pair.Key, pair => pair.Value.Clone());
+
+    private void RestorePasses(Dictionary<uint, ArchePassProgress> snapshot)
     {
+        lock (_sync)
+        {
+            _passes.Clear();
+            foreach (var pair in snapshot)
+                _passes[pair.Key] = pair.Value.Clone();
+        }
+    }
+
+    private bool TryPersist()
+    {
+        if (FailNextPersist)
+        {
+            FailNextPersist = false;
+            return false;
+        }
+
         if (Owner == null || BypassChargesForTests || Owner.Id == 0)
-            return;
+            return true;
 
         using var connection = MySQL.CreateConnection();
         using var transaction = connection.BeginTransaction();
@@ -604,6 +705,7 @@ public sealed class CharacterArchePass
             Persist(connection, transaction);
             PersistMissions(connection, transaction);
             transaction.Commit();
+            return true;
         }
         catch (Exception ex)
         {
@@ -616,13 +718,21 @@ public sealed class CharacterArchePass
             {
                 Logger.Fatal(rollback, "ArchePass persist rollback failed for {0}", Owner.Name);
             }
+
+            return false;
         }
     }
 
-    private void PersistMissions()
+    private bool TryPersistMissions()
     {
+        if (FailNextPersist)
+        {
+            FailNextPersist = false;
+            return false;
+        }
+
         if (Owner == null || BypassChargesForTests || Owner.Id == 0)
-            return;
+            return true;
 
         using var connection = MySQL.CreateConnection();
         using var transaction = connection.BeginTransaction();
@@ -630,6 +740,7 @@ public sealed class CharacterArchePass
         {
             PersistMissions(connection, transaction);
             transaction.Commit();
+            return true;
         }
         catch (Exception ex)
         {
@@ -642,6 +753,8 @@ public sealed class CharacterArchePass
             {
                 Logger.Fatal(rollback, "ArchePass mission persist rollback failed for {0}", Owner.Name);
             }
+
+            return false;
         }
     }
 

@@ -74,6 +74,37 @@ public class CharacterBlessUthstinTests
     }
 
     [Test]
+    public async Task PersistFailure_RevertsExtendExpandAndSelect()
+    {
+        var state = Create();
+        state.FailNextPersist = true;
+        await Assert.That(state.TryExtend()).IsFalse();
+        await Assert.That(state.ExtendMaxStats).IsEqualTo(0);
+        await Assert.That(state.ApplyExtendCount).IsEqualTo(0);
+
+        state.FailNextPersist = true;
+        await Assert.That(state.TryExpand()).IsFalse();
+        await Assert.That(state.Pages.Count).IsEqualTo(1);
+
+        await Assert.That(state.TryExpand()).IsTrue();
+        state.FailNextPersist = true;
+        await Assert.That(state.TrySelect(1)).IsFalse();
+        await Assert.That(state.SelectPageIndex).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task PersistFailure_RevertsAnAppliedRoll()
+    {
+        var state = Create();
+        await Assert.That(state.TryConsumeApply(TestItemId, 0)).IsTrue();
+        await Assert.That(state.TryPeekPendingForTests(out _, out var itemType, out var inc, out var dec, out var incPts, out var decPts)).IsTrue();
+        state.FailNextPersist = true;
+        await Assert.That(state.TryApply(true, (int)itemType, inc, dec, incPts, decPts, 0)).IsFalse();
+        await Assert.That(state.Pages[0].Strength).IsEqualTo(0);
+        await Assert.That(state.Pages[0].ApplyNormalCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task SelectPending_UsesTheStashedZeroBasedPage()
     {
         var state = Create();

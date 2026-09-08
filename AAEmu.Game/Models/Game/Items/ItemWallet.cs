@@ -50,12 +50,11 @@ public static class ItemWallet
         if (amount <= 0)
             return 0;
 
-        var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, Item.BmMileage, amount, null);
-        if (consumed <= 0)
+        if (!CreditLoyalty(character, amount))
             return 0;
 
-        CreditLoyalty(character, consumed);
-        return consumed;
+        var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, Item.BmMileage, amount, null);
+        return SettleConsume(character, amount, consumed, loyalty: true);
     }
 
     public static bool CreditCredits(Character character, int amount)
@@ -128,13 +127,40 @@ public static class ItemWallet
             if (per <= 0)
                 continue;
             var total = group.Sum(x => x.Count);
-            var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, group.Key, total, null);
-            if (consumed <= 0)
+            var credits = ItemWalletRules.CreditsFromEffect(per, total);
+            if (!CreditCredits(character, credits))
                 continue;
-            if (CreditCredits(character, ItemWalletRules.CreditsFromEffect(per, consumed)))
-                credited += consumed;
+            var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, group.Key, total, null);
+            var kept = SettleConsume(character, total, consumed, loyalty: false, perCredit: per);
+            if (kept > 0)
+                credited += kept;
         }
 
         return credited;
+    }
+
+    private static int SettleConsume(Character character, int requested, int consumed, bool loyalty, int perCredit = 1)
+    {
+        var refundCount = ItemWalletRules.RefundAfterPartialConsume(requested, consumed);
+        if (refundCount > 0)
+        {
+            if (loyalty)
+                AccountManager.Instance.AddLoyalty(character.AccountId, -refundCount);
+            else
+                AccountManager.Instance.AddCredits(
+                    character.AccountId,
+                    -ItemWalletRules.CreditsFromEffect(perCredit, refundCount));
+
+            var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
+            if (loyalty)
+            {
+                character.BmPoint = points.Loyalty;
+                character.SendPacket(new SCBmPointPacket(character.BmPoint));
+            }
+            else
+                character.SendPacket(new SCICSCashPointPacket(points.Credits));
+        }
+
+        return Math.Max(0, consumed);
     }
 }

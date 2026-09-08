@@ -34,7 +34,9 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             return;
 
         var day = AccountAttendanceRules.CalendarDay(DateTime.UtcNow);
-        var claims = LoadMonth(character.AccountId, day.Year, day.Month);
+        if (!TryGetMonth(character.AccountId, day.Year, day.Month, out var claims))
+            claims = [];
+
         var times = new long[AccountAttendanceRules.DaysInPacket];
         var archelife = new bool[AccountAttendanceRules.DaysInPacket];
         foreach (var (claimedDay, claim) in claims)
@@ -59,8 +61,8 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         }
 
         var day = AccountAttendanceRules.CalendarDay(DateTime.UtcNow);
-        var claims = LoadMonth(character.AccountId, day.Year, day.Month);
-        if (!AccountAttendanceRules.CanClaim(claims.ContainsKey(day.Day)))
+        if (!TryGetMonth(character.AccountId, day.Year, day.Month, out var claims) ||
+            !AccountAttendanceRules.CanClaim(claims.ContainsKey(day.Day)))
         {
             character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
             return;
@@ -91,15 +93,23 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             AccountAttendanceRules.ShouldGrantAdditional(archelifeDays, extra.DayCount))
             grants.Add(extra);
 
-        if (!TryGrant(character, grants, out var byMail))
+        var unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var claim = new Claim { AttendedAt = unix, IsArchelife = isArchelife };
+        if (!TryPersist(character.AccountId, day.Year, day.Month, day.Day, unix, isArchelife))
         {
             character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
             return;
         }
 
-        var unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        claims[day.Day] = new Claim { AttendedAt = unix, IsArchelife = isArchelife };
-        Persist(character.AccountId, day.Year, day.Month, day.Day, unix, isArchelife);
+        claims[day.Day] = claim;
+        if (!TryGrant(character, grants, out var byMail))
+        {
+            claims.Remove(day.Day);
+            TryRemoveClaim(character.AccountId, day.Year, day.Month, day.Day);
+            character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
+            return;
+        }
+
         character.SendPacket(new SCAccountAttendanceAddedPacket(true, unix, isArchelife));
         character.SendPacket(new SCAccountAttendanceRewardedPacket(0, byMail));
         SendMonth(character);
@@ -133,14 +143,15 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         {
             foreach (var grant in items)
             {
-                character.Inventory.Bag.AcquireDefaultItemEx(
-                    ItemTaskType.SkillEffectGainItem,
-                    grant.ItemId,
-                    grant.ItemCount,
-                    grant.ItemGradeId,
-                    out _,
-                    out _,
-                    character.Id);
+                if (!character.Inventory.Bag.AcquireDefaultItemEx(
+                        ItemTaskType.SkillEffectGainItem,
+                        grant.ItemId,
+                        grant.ItemCount,
+                        grant.ItemGradeId,
+                        out _,
+                        out _,
+                        character.Id))
+                    return false;
             }
             return true;
         }
@@ -183,13 +194,13 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         return true;
     }
 
-    private Dictionary<int, Claim> LoadMonth(uint accountId, int year, int month)
+    private bool TryGetMonth(uint accountId, int year, int month, out Dictionary<int, Claim> claims)
     {
         var key = (accountId, year, month);
-        if (_months.TryGetValue(key, out var cached))
-            return cached;
+        if (_months.TryGetValue(key, out claims))
+            return true;
 
-        var claims = new Dictionary<int, Claim>();
+        claims = [];
         try
         {
             using var connection = MySQL.CreateConnection();
@@ -219,17 +230,19 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             Logger.Warn(
                 "Account attendance table missing — run SQL/updates/2026-09-06_aaemu_game_account_attendances.sql ({0})",
                 ex.Message);
+            return false;
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Account attendance LoadMonth failed for account {0}", accountId);
+            return false;
         }
 
         _months[key] = claims;
-        return claims;
+        return true;
     }
 
-    private void Persist(uint accountId, int year, int month, int day, long attendedAt, bool isArchelife)
+    private static bool TryPersist(uint accountId, int year, int month, int day, long attendedAt, bool isArchelife)
     {
         try
         {
@@ -237,7 +250,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             using var command = connection.CreateCommand();
             command.CommandText =
                 """
-                REPLACE INTO account_attendances
+                INSERT INTO account_attendances
                     (account_id, year, month, day, attended_at, is_archelife)
                 VALUES
                     (@account, @year, @month, @day, @attendedAt, @archelife)
@@ -249,17 +262,45 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             command.Parameters.AddWithValue("@attendedAt", attendedAt);
             command.Parameters.AddWithValue("@archelife", isArchelife ? 1 : 0);
             command.Prepare();
-            command.ExecuteNonQuery();
+            return command.ExecuteNonQuery() > 0;
         }
         catch (MySqlException ex) when (ex.Number is 1146 or 1054)
         {
             Logger.Warn(
                 "Account attendance Persist skipped (table missing): account={0}",
                 accountId);
+            return false;
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Account attendance Persist failed account={0}", accountId);
+            return false;
+        }
+    }
+
+    private static bool TryRemoveClaim(uint accountId, int year, int month, int day)
+    {
+        try
+        {
+            using var connection = MySQL.CreateConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                DELETE FROM account_attendances
+                WHERE account_id = @account AND year = @year AND month = @month AND day = @day
+                """;
+            command.Parameters.AddWithValue("@account", accountId);
+            command.Parameters.AddWithValue("@year", year);
+            command.Parameters.AddWithValue("@month", month);
+            command.Parameters.AddWithValue("@day", day);
+            command.Prepare();
+            command.ExecuteNonQuery();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Account attendance RemoveClaim failed account={0}", accountId);
+            return false;
         }
     }
 }

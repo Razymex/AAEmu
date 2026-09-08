@@ -40,7 +40,8 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         {
             if (!IsEligible(character, def))
                 continue;
-            var progress = Load(character.AccountId, def.Id, now);
+            if (!TryLoad(character.AccountId, def.Id, now, out var progress))
+                continue;
             items.Add(ToWire(def.Id, progress));
             if (items.Count >= ScheduleItemRules.MaxItemsInPacket)
                 break;
@@ -58,16 +59,33 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
             if (!IsEligible(character, def))
                 continue;
 
-            var progress = Load(character.AccountId, def.Id, now);
+            if (!TryLoad(character.AccountId, def.Id, now, out var progress))
+                continue;
             if (!ScheduleItemRules.ShouldAutoGrant(def.Kind, def.ActiveTake, def.GiveTerm, progress.Gave, def.GiveMax))
                 continue;
-            if (!TryGrant(character, def, out var byMail))
-                continue;
 
+            var previousGave = progress.Gave;
+            var previousCumulated = progress.Cumulated;
+            var previousUpdated = progress.Updated;
             progress.Gave = (byte)Math.Min(byte.MaxValue, progress.Gave + 1);
             progress.Cumulated = 0;
             progress.Updated = now;
-            Persist(character.AccountId, def.Id, progress);
+            if (!TryPersist(character.AccountId, def.Id, progress))
+            {
+                progress.Gave = previousGave;
+                progress.Cumulated = previousCumulated;
+                progress.Updated = previousUpdated;
+                continue;
+            }
+
+            if (!TryGrant(character, def, out var byMail))
+            {
+                progress.Gave = previousGave;
+                progress.Cumulated = previousCumulated;
+                progress.Updated = previousUpdated;
+                TryPersist(character.AccountId, def.Id, progress);
+                continue;
+            }
             Logger.Info(
                 "Schedule item auto-granted account={0} id={1} item={2} x{3} byMail={4}",
                 character.AccountId,
@@ -90,7 +108,8 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         {
             if (def.GiveTerm <= 0 || !IsEligible(character, def))
                 continue;
-            var progress = Load(character.AccountId, def.Id, now);
+            if (!TryLoad(character.AccountId, def.Id, now, out var progress))
+                continue;
             var addSeconds = (int)Math.Max(0, (now - progress.LastOnlineTick).TotalSeconds);
             progress.LastOnlineTick = now;
             if (addSeconds <= 0)
@@ -98,9 +117,16 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
             var next = ScheduleItemRules.TickCumulated(progress.Cumulated, def.GiveTerm, addSeconds);
             if (next == progress.Cumulated)
                 continue;
+            var previousCumulated = progress.Cumulated;
+            var previousUpdated = progress.Updated;
             progress.Cumulated = next;
             progress.Updated = now;
-            Persist(character.AccountId, def.Id, progress);
+            if (!TryPersist(character.AccountId, def.Id, progress))
+            {
+                progress.Cumulated = previousCumulated;
+                progress.Updated = previousUpdated;
+                continue;
+            }
             changed = true;
         }
 
@@ -120,17 +146,34 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         if (!IsEligible(character, def))
             return;
 
-        var progress = Load(character.AccountId, scheduleId, now);
+        if (!TryLoad(character.AccountId, scheduleId, now, out var progress))
+            return;
         if (!ScheduleItemRules.CanTake(progress.Gave, def.GiveMax, progress.Cumulated, def.GiveTerm))
             return;
 
-        if (!TryGrant(character, def, out var byMail))
-            return;
-
+        var previousGave = progress.Gave;
+        var previousCumulated = progress.Cumulated;
+        var previousUpdated = progress.Updated;
         progress.Gave = (byte)Math.Min(byte.MaxValue, progress.Gave + 1);
         progress.Cumulated = 0;
         progress.Updated = now;
-        Persist(character.AccountId, scheduleId, progress);
+        if (!TryPersist(character.AccountId, scheduleId, progress))
+        {
+            progress.Gave = previousGave;
+            progress.Cumulated = previousCumulated;
+            progress.Updated = previousUpdated;
+            return;
+        }
+
+        if (!TryGrant(character, def, out var byMail))
+        {
+            progress.Gave = previousGave;
+            progress.Cumulated = previousCumulated;
+            progress.Updated = previousUpdated;
+            TryPersist(character.AccountId, scheduleId, progress);
+            return;
+        }
+
         character.SendPacket(new SCScheduleItemSentPacket(scheduleId, byMail));
         SendActive(character);
         Logger.Info(
@@ -212,16 +255,16 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         return true;
     }
 
-    private Progress Load(uint accountId, int scheduleId, DateTime utcNow)
+    private bool TryLoad(uint accountId, int scheduleId, DateTime utcNow, out Progress progress)
     {
         var key = (accountId, scheduleId);
-        if (_progress.TryGetValue(key, out var cached))
+        if (_progress.TryGetValue(key, out progress))
         {
-            ResetIfNeeded(cached, utcNow);
-            return cached;
+            ResetIfNeeded(progress, utcNow);
+            return true;
         }
 
-        var progress = new Progress { Updated = utcNow, LastOnlineTick = utcNow };
+        progress = new Progress { Updated = utcNow, LastOnlineTick = utcNow };
         try
         {
             using var connection = MySQL.CreateConnection();
@@ -248,15 +291,17 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
             Logger.Warn(
                 "Schedule item table missing — run SQL/updates/2026-09-06_aaemu_game_account_schedule_items.sql ({0})",
                 ex.Message);
+            return false;
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Schedule item Load failed account={0} id={1}", accountId, scheduleId);
+            return false;
         }
 
         ResetIfNeeded(progress, utcNow);
         _progress[key] = progress;
-        return progress;
+        return true;
     }
 
     private static void ResetIfNeeded(Progress progress, DateTime utcNow)
@@ -269,7 +314,7 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         progress.LastOnlineTick = utcNow;
     }
 
-    private void Persist(uint accountId, int scheduleId, Progress progress)
+    private static bool TryPersist(uint accountId, int scheduleId, Progress progress)
     {
         try
         {
@@ -289,14 +334,17 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
             command.Parameters.AddWithValue("@updated", Helpers.UnixTime(progress.Updated));
             command.Prepare();
             command.ExecuteNonQuery();
+            return true;
         }
         catch (MySqlException ex) when (ex.Number is 1146 or 1054)
         {
             Logger.Warn("Schedule item Persist skipped (table missing): account={0} id={1}", accountId, scheduleId);
+            return false;
         }
         catch (Exception ex)
         {
             Logger.Error(ex, "Schedule item Persist failed account={0} id={1}", accountId, scheduleId);
+            return false;
         }
     }
 }

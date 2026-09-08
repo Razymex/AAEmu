@@ -142,6 +142,42 @@ public class CharacterArchePassTests
     }
 
     [Test]
+    public async Task PersistFailure_DoesNotKeepAPaidBuy()
+    {
+        var state = Create();
+        state.FailNextPersist = true;
+        await Assert.That(state.TryBuy(TestPassId)).IsFalse();
+        await Assert.That(state.StatusOf(TestPassId)).IsEqualTo(ArchePassStatus.Invalid);
+        await Assert.That(state.FailNextPersist).IsFalse();
+    }
+
+    [Test]
+    public async Task PersistFailure_RevertsStartAndPoints()
+    {
+        var state = Create();
+        await Assert.That(state.TryBuy(TestPassId)).IsTrue();
+
+        state.FailNextPersist = true;
+        await Assert.That(state.TryStart(TestPassId)).IsFalse();
+        await Assert.That(state.StatusOf(TestPassId)).IsEqualTo(ArchePassStatus.Owned);
+
+        await Assert.That(state.TryStart(TestPassId)).IsTrue();
+        state.FailNextPersist = true;
+        await Assert.That(state.TryAddPoints(10)).IsFalse();
+        await Assert.That(state.Snapshot().Single().Point).IsEqualTo(0L);
+    }
+
+    [Test]
+    public async Task PersistFailure_DoesNotAdvanceAClaimedTier()
+    {
+        var state = Started();
+        await Assert.That(state.TryAddPoints(100)).IsTrue();
+        state.FailNextPersist = true;
+        await Assert.That(state.TryClaim(1, premium: false)).IsFalse();
+        await Assert.That(state.Snapshot().Single().LastRewardTier).IsEqualTo(0u);
+    }
+
+    [Test]
     public async Task HasProgress_MatchesTheLivePass()
     {
         var state = Create();

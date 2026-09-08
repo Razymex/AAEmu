@@ -39,4 +39,14 @@ public class ItemWalletRulesTests
         await Assert.That(ItemWalletRules.CreditsFromEffect(0, 1)).IsEqualTo(0);
         await Assert.That(ItemWalletRules.CreditsFromEffect(200, 0)).IsEqualTo(0);
     }
+
+    [Test]
+    public async Task RefundAfterPartialConsume_OnlyTheUnremovedCount()
+    {
+        await Assert.That(ItemWalletRules.RefundAfterPartialConsume(5, 5)).IsEqualTo(0);
+        await Assert.That(ItemWalletRules.RefundAfterPartialConsume(5, 3)).IsEqualTo(2);
+        await Assert.That(ItemWalletRules.RefundAfterPartialConsume(5, 0)).IsEqualTo(5);
+        await Assert.That(ItemWalletRules.RefundAfterPartialConsume(5, -1)).IsEqualTo(5);
+        await Assert.That(ItemWalletRules.RefundAfterPartialConsume(0, 0)).IsEqualTo(0);
+    }
 }

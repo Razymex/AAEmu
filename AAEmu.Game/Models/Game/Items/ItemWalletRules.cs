@@ -26,4 +26,15 @@ public static class ItemWalletRules
     /// </summary>
     public static int CreditsFromEffect(int value1, int count) =>
         value1 > 0 && count > 0 ? value1 * count : 0;
+
+    /// <summary>
+    /// Loyalty or credits already written when only some of the bag stacks could be removed.
+    /// </summary>
+    public static int RefundAfterPartialConsume(int credited, int consumed)
+    {
+        if (credited <= 0)
+            return 0;
+        var kept = Math.Max(0, consumed);
+        return kept >= credited ? 0 : credited - kept;
+    }
 }

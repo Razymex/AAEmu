@@ -54,6 +54,9 @@ public sealed class CharacterBlessUthstin
     /// <summary>Tests skip item/gold charges.</summary>
     public bool BypassChargesForTests { get; set; }
 
+    /// <summary>Tests force the next persist to fail and then clear this flag.</summary>
+    public bool FailNextPersist { get; set; }
+
     /// <summary>When set, floor/overflow checks use these five live attrs instead of the unit.</summary>
     public int[] TestLiveStats { get; set; }
 
@@ -191,6 +194,7 @@ public sealed class CharacterBlessUthstin
 
         BlessUthstinPendingRoll pending;
         BlessUthstinPage page;
+        BlessSnapshot snapshot;
         lock (_sync)
         {
             pending = _pending;
@@ -217,21 +221,7 @@ public sealed class CharacterBlessUthstin
             if (!TryGetPage(pageIndex, out page))
                 return false;
 
-            if (!BypassChargesForTests)
-            {
-                var consumeItem = Owner.Inventory.GetItemById(pending.ItemId);
-                if (consumeItem == null ||
-                    Owner.Inventory.Bag.ConsumeItem(
-                        ItemTaskType.BlessUthstinChangeStats,
-                        pending.ItemType,
-                        pending.NeedCount,
-                        consumeItem) != pending.NeedCount)
-                {
-                    _pending = null;
-                    return FailRequiredItem();
-                }
-            }
-
+            snapshot = Capture();
             BlessUthstinRules.ApplyRoll(
                 page,
                 pending.IncKind,
@@ -242,7 +232,28 @@ public sealed class CharacterBlessUthstin
             _pending = null;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            Restore(snapshot);
+            return false;
+        }
+
+        if (!BypassChargesForTests)
+        {
+            var consumeItem = Owner.Inventory.GetItemById(pending.ItemId);
+            if (consumeItem == null ||
+                Owner.Inventory.Bag.ConsumeItem(
+                    ItemTaskType.BlessUthstinChangeStats,
+                    pending.ItemType,
+                    pending.NeedCount,
+                    consumeItem) != pending.NeedCount)
+            {
+                Restore(snapshot);
+                TryPersist();
+                return FailRequiredItem();
+            }
+        }
+
         RefreshModifiersIfSelected(pageIndex);
         SendApply(pageIndex, page, login: false);
         return true;
@@ -254,6 +265,7 @@ public sealed class CharacterBlessUthstin
             return false;
 
         BlessUthstinPage page;
+        BlessSnapshot snapshot;
         lock (_sync)
         {
             if (!TryGetPage(pageIndex, out page))
@@ -263,19 +275,28 @@ public sealed class CharacterBlessUthstin
                 page.ApplySpecialCount == 0)
                 return false;
 
-            if (!BypassChargesForTests &&
-                !TryConsumeTemplate(
-                    BlessUthstinRules.InitItemId,
-                    BlessUthstinRules.InitItemCount,
-                    ItemTaskType.BlessUthstinInitStats))
-                return false;
-
+            snapshot = Capture();
             page.Clear();
             if (_pending?.PageIndex == pageIndex)
                 _pending = null;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            Restore(snapshot);
+            return false;
+        }
+
+        if (!BypassChargesForTests &&
+            !TryConsumeTemplate(
+                BlessUthstinRules.InitItemId,
+                BlessUthstinRules.InitItemCount,
+                ItemTaskType.BlessUthstinInitStats))
+        {
+            Restore(snapshot);
+            TryPersist();
+            return false;
+        }
         RefreshModifiersIfSelected(pageIndex);
         Owner.SendPacket(new SCBlessUthstinInitStatsPacket(Owner.ObjId, true, pageIndex));
         SendApply(pageIndex, page, login: false);
@@ -287,21 +308,32 @@ public sealed class CharacterBlessUthstin
         if (!FeatureOn() || Owner == null)
             return false;
 
+        BlessSnapshot snapshot;
+        int need;
         lock (_sync)
         {
             if (!BlessUthstinRules.CanExtend(ExtendMaxStats))
                 return false;
 
-            var need = BlessUthstinRules.ExtendItemCount(ApplyExtendCount + 1, EvaluateExtendFormula);
-            if (!BypassChargesForTests &&
-                !TryConsumeTemplate(BlessUthstinRules.ExtendItemId, need, ItemTaskType.BlessUthstinExpandMaxStats))
-                return false;
-
+            need = BlessUthstinRules.ExtendItemCount(ApplyExtendCount + 1, EvaluateExtendFormula);
+            snapshot = Capture();
             ExtendMaxStats += BlessUthstinRules.ExtendPerPoint;
             ApplyExtendCount++;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            Restore(snapshot);
+            return false;
+        }
+
+        if (!BypassChargesForTests &&
+            !TryConsumeTemplate(BlessUthstinRules.ExtendItemId, need, ItemTaskType.BlessUthstinExpandMaxStats))
+        {
+            Restore(snapshot);
+            TryPersist();
+            return false;
+        }
         Owner.SendPacket(new SCBlessUthstinExtendMaxStatsPacket(
             Owner.ObjId,
             true,
@@ -316,24 +348,35 @@ public sealed class CharacterBlessUthstin
             return false;
 
         int newIndex;
+        int need;
+        BlessSnapshot snapshot;
         lock (_sync)
         {
             if (Pages.Count >= BlessUthstinRules.MaxPageCount)
                 return false;
 
-            var need = BlessUthstinRules.ExpandNeedCount(Pages.Count);
+            need = BlessUthstinRules.ExpandNeedCount(Pages.Count);
             if (need <= 0)
                 return false;
 
-            if (!BypassChargesForTests &&
-                !TryConsumeTemplate(BlessUthstinRules.ExpandItemId, need, ItemTaskType.BlessUthstinExpandPage))
-                return false;
-
+            snapshot = Capture();
             Pages.Add(new BlessUthstinPage());
             newIndex = Pages.Count - 1;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            Restore(snapshot);
+            return false;
+        }
+
+        if (!BypassChargesForTests &&
+            !TryConsumeTemplate(BlessUthstinRules.ExpandItemId, need, ItemTaskType.BlessUthstinExpandPage))
+        {
+            Restore(snapshot);
+            TryPersist();
+            return false;
+        }
         Owner.SendPacket(new SCBlessUthstinExpandPagePacket(Owner.ObjId, true, newIndex));
         return true;
     }
@@ -344,6 +387,8 @@ public sealed class CharacterBlessUthstin
             return false;
 
         BlessUthstinPage dest;
+        long cost;
+        BlessSnapshot snapshot;
         lock (_sync)
         {
             if (srcPageIndex == dstPageIndex)
@@ -351,16 +396,25 @@ public sealed class CharacterBlessUthstin
             if (!TryGetPage(srcPageIndex, out var src) || !TryGetPage(dstPageIndex, out dest))
                 return false;
 
-            var cost = BlessUthstinRules.CopyCost(BlessUthstinRules.PositiveApplied(src));
-            if (!TryCharge(cost, ItemTaskType.BlessUthstinCopyPage))
-                return false;
-
+            cost = BlessUthstinRules.CopyCost(BlessUthstinRules.PositiveApplied(src));
+            snapshot = Capture();
             dest.CopyFrom(src);
             if (_pending?.PageIndex == dstPageIndex)
                 _pending = null;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            Restore(snapshot);
+            return false;
+        }
+
+        if (!TryCharge(cost, ItemTaskType.BlessUthstinCopyPage))
+        {
+            Restore(snapshot);
+            TryPersist();
+            return false;
+        }
         RefreshModifiersIfSelected(dstPageIndex);
         Owner.SendPacket(new SCBlessUthstinCopyPagePacket(Owner.ObjId, true, dstPageIndex, dest));
         return true;
@@ -372,6 +426,8 @@ public sealed class CharacterBlessUthstin
             return false;
 
         BlessUthstinPage page;
+        long cost;
+        BlessSnapshot snapshot;
         lock (_sync)
         {
             if (!TryGetPage(pageIndex, out page))
@@ -379,14 +435,23 @@ public sealed class CharacterBlessUthstin
             if (SelectPageIndex == pageIndex)
                 return true;
 
-            var cost = BlessUthstinRules.SelectCost(Owner.Level);
-            if (!TryCharge(cost, ItemTaskType.BlessUthstinSelectPage))
-                return false;
-
+            cost = BlessUthstinRules.SelectCost(Owner.Level);
+            snapshot = Capture();
             SelectPageIndex = pageIndex;
         }
 
-        Persist();
+        if (!TryPersist())
+        {
+            Restore(snapshot);
+            return false;
+        }
+
+        if (!TryCharge(cost, ItemTaskType.BlessUthstinSelectPage))
+        {
+            Restore(snapshot);
+            TryPersist();
+            return false;
+        }
         ApplyModifiers();
         Owner.SendPacket(new SCBlessUthstinSelectPagePacket(Owner.ObjId, true, pageIndex));
         SendApply(pageIndex, page, login: false);
@@ -644,10 +709,48 @@ public sealed class CharacterBlessUthstin
         return (int)Math.Max(1, Math.Round(value));
     }
 
-    private void Persist()
+    private sealed class BlessSnapshot
     {
+        public List<BlessUthstinPage> Pages { get; init; }
+        public int SelectPageIndex { get; init; }
+        public int ExtendMaxStats { get; init; }
+        public int ApplyExtendCount { get; init; }
+        public BlessUthstinPendingRoll Pending { get; init; }
+    }
+
+    private BlessSnapshot Capture() =>
+        new()
+        {
+            Pages = Pages.Select(page => page.Clone()).ToList(),
+            SelectPageIndex = SelectPageIndex,
+            ExtendMaxStats = ExtendMaxStats,
+            ApplyExtendCount = ApplyExtendCount,
+            Pending = _pending
+        };
+
+    private void Restore(BlessSnapshot snapshot)
+    {
+        lock (_sync)
+        {
+            Pages.Clear();
+            Pages.AddRange(snapshot.Pages.Select(page => page.Clone()));
+            SelectPageIndex = snapshot.SelectPageIndex;
+            ExtendMaxStats = snapshot.ExtendMaxStats;
+            ApplyExtendCount = snapshot.ApplyExtendCount;
+            _pending = snapshot.Pending;
+        }
+    }
+
+    private bool TryPersist()
+    {
+        if (FailNextPersist)
+        {
+            FailNextPersist = false;
+            return false;
+        }
+
         if (Owner == null || BypassChargesForTests || Owner.Id == 0)
-            return;
+            return true;
 
         using var connection = MySQL.CreateConnection();
         using var transaction = connection.BeginTransaction();
@@ -655,6 +758,7 @@ public sealed class CharacterBlessUthstin
         {
             Persist(connection, transaction);
             transaction.Commit();
+            return true;
         }
         catch (Exception ex)
         {
@@ -667,6 +771,8 @@ public sealed class CharacterBlessUthstin
             {
                 Logger.Fatal(rollback, "BlessUthstin persist rollback failed for {0}", Owner.Name);
             }
+
+            return false;
         }
     }
 
