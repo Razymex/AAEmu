@@ -69,7 +69,9 @@ public class SaveManager(
     /// </summary>
     public bool DoSave() => TrySave() == WorldSaveStatus.Saved;
 
-    public WorldSaveStatus TrySave()
+    public WorldSaveStatus TrySave() => TrySave(null);
+
+    public WorldSaveStatus TrySave(Action onFailed)
     {
         if (_isSaving)
             return WorldSaveStatus.Busy;
@@ -97,6 +99,9 @@ public class SaveManager(
                     _isSaving = false;
                 }
             }
+
+            if (!saved)
+                onFailed?.Invoke();
         }
         finally
         {

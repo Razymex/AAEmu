@@ -614,13 +614,15 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     /// Nested scopes leave the request for the outer dispose and report
     /// <see cref="WorldSaveStatus.Busy"/>.
     /// </summary>
-    public WorldSaveStatus FlushRequestedNow()
+    public WorldSaveStatus FlushRequestedNow() => FlushRequestedNow(null);
+
+    public WorldSaveStatus FlushRequestedNow(Action onFailed)
     {
         if (t_persistDeferDepth > 1)
             return WorldSaveStatus.Busy;
 
         if (t_persistDeferDepth == 0)
-            return EnsurePersisted();
+            return FlushPersist(onFailed);
 
         if (!t_persistRequested)
         {
@@ -632,7 +634,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         PersistenceGate.ExitOperation();
         try
         {
-            return FlushPersist();
+            return FlushPersist(onFailed);
         }
         finally
         {
@@ -651,7 +653,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         return FlushPersist();
     }
 
-    private WorldSaveStatus FlushPersist()
+    private WorldSaveStatus FlushPersist(Action onFailed = null)
     {
         var saver = SingletonContainer.ServiceProvider?.GetService<ISaveManager>();
         if (saver == null)
@@ -662,7 +664,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
         // A save that is already running took the gate after this operation released it, so
         // it carries everything the operation wrote. Nothing is lost by not saving twice.
-        var status = saver.TrySave();
+        var status = saver.TrySave(onFailed);
         t_lastFlushStatus = status;
         if (status == WorldSaveStatus.Busy)
             Logger.Debug("Mail persist folded into the save already in progress");

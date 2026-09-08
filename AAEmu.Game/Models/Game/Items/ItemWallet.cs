@@ -77,14 +77,16 @@ public static class ItemWallet
             var loyalty = ItemWalletRules.LoyaltyFromCount(consumed);
             AccountLiveWallet.QueueLoyalty(character.AccountId, loyalty);
             WorldSnapshotCommit.RequestFlush(bypassCharges: false);
-            if (WorldSnapshotCommit.FlushNow(bypassCharges: false))
+            if (WorldSnapshotCommit.FlushNow(bypassCharges: false, () =>
+                {
+                    AccountLiveWallet.UnqueueLoyalty(character.AccountId, loyalty);
+                    TryRestore(character, container, templateId, consumed, "loyalty");
+                }))
             {
                 PublishLoyalty(character);
                 return consumed;
             }
 
-            AccountLiveWallet.UnqueueLoyalty(character.AccountId, loyalty);
-            TryRestore(character, container, templateId, consumed, "loyalty");
             return 0;
         }
     }
@@ -184,14 +186,16 @@ public static class ItemWallet
 
             AccountLiveWallet.QueueCredits(character.AccountId, pay);
             WorldSnapshotCommit.RequestFlush(bypassCharges: false);
-            if (WorldSnapshotCommit.FlushNow(bypassCharges: false))
+            if (WorldSnapshotCommit.FlushNow(bypassCharges: false, () =>
+                {
+                    AccountLiveWallet.UnqueueCredits(character.AccountId, pay);
+                    TryRestore(character, container, templateId, consumed, "credits");
+                }))
             {
                 PublishCredits(character);
                 return true;
             }
 
-            AccountLiveWallet.UnqueueCredits(character.AccountId, pay);
-            TryRestore(character, container, templateId, consumed, "credits");
             return false;
         }
     }

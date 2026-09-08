@@ -242,6 +242,28 @@ public sealed class MailTests
     }
 
     [Test]
+    public async Task FlushRequestedNow_FailedSave_RunsCleanupBeforeReleasingTheSaveLock()
+    {
+        _saves.FailNext = true;
+        var cleanedWhileSaveHeld = false;
+        var cleanedWhileOperationHeld = false;
+        using (_mailManager.DeferPersist())
+        {
+            _mailManager.PersistNow();
+            var status = _mailManager.FlushRequestedNow(() =>
+            {
+                cleanedWhileSaveHeld = PersistenceGate.IsSaveHeld;
+                cleanedWhileOperationHeld = PersistenceGate.IsOperationHeld;
+            });
+            await Assert.That(status).IsEqualTo(WorldSaveStatus.Failed);
+            await Assert.That(cleanedWhileSaveHeld).IsTrue();
+            await Assert.That(cleanedWhileOperationHeld).IsFalse();
+            await Assert.That(PersistenceGate.IsOperationHeld).IsTrue();
+            await Assert.That(PersistenceGate.IsSaveHeld).IsFalse();
+        }
+    }
+
+    [Test]
     public async Task PlayerNotFoundTest()
     {
 
