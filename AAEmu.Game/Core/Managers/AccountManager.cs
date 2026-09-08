@@ -285,6 +285,46 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
 
     public bool RemoveCredits(uint accountId, int credits) => AddCredits(accountId, -credits);
 
+    /// <summary>
+    /// Same write as <see cref="AddLoyalty"/> on the caller's transaction so a convert
+    /// and its bag removal commit or roll back together.
+    /// </summary>
+    public bool AddLoyaltyOn(uint accountId, int loyaltyAmount, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (connection == null || transaction == null || loyaltyAmount == 0)
+            return loyaltyAmount == 0;
+
+        object accLock;
+        lock (_locks)
+        {
+            if (!_locks.TryGetValue(accountId, out accLock))
+            {
+                accLock = new object();
+                _locks.Add(accountId, accLock);
+            }
+        }
+
+        lock (accLock)
+        {
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.Connection = connection;
+                command.Transaction = transaction;
+                command.CommandText = "INSERT INTO accounts (account_id, loyalty) VALUES(@acc_id, @loyalty_amount) ON DUPLICATE KEY UPDATE loyalty = loyalty + @loyalty_amount";
+                command.Parameters.AddWithValue("@acc_id", accountId);
+                command.Parameters.AddWithValue("@loyalty_amount", loyaltyAmount);
+                command.Prepare();
+                return command.ExecuteNonQuery() > 0;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"{e.Message}\n{e.StackTrace}");
+                return false;
+            }
+        }
+    }
+
     public bool AddLoyalty(uint accountId, int loyaltyAmount)
     {
         object accLock;

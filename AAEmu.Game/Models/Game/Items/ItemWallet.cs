@@ -1,6 +1,7 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Containers;
@@ -27,8 +28,7 @@ public static class ItemWallet
         if (!AccountManager.Instance.AddLoyalty(character.AccountId, add))
             return false;
 
-        character.BmPoint = AccountManager.Instance.GetAccountDetails(character.AccountId).Loyalty;
-        character.SendPacket(new SCBmPointPacket(character.BmPoint));
+        PublishLoyalty(character);
         return true;
     }
 
@@ -71,8 +71,13 @@ public static class ItemWallet
         if (consumed <= 0)
             return 0;
 
-        if (CreditLoyalty(character, consumed))
+        var loyalty = ItemWalletRules.LoyaltyFromCount(consumed);
+        if (PersistWithRemoval(character, () => AccountLiveWallet.QueueLoyalty(character.AccountId, loyalty),
+                () => AccountLiveWallet.UnqueueLoyalty(character.AccountId, loyalty)))
+        {
+            PublishLoyalty(character);
             return consumed;
+        }
 
         TryRestore(character, container, templateId, consumed, "loyalty");
         return 0;
@@ -86,8 +91,7 @@ public static class ItemWallet
         if (!AccountManager.Instance.AddCredits(character.AccountId, amount))
             return false;
 
-        var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
-        character.SendPacket(new SCICSCashPointPacket(points.Credits));
+        PublishCredits(character);
         return true;
     }
 
@@ -99,8 +103,7 @@ public static class ItemWallet
         if (!AccountManager.Instance.RemoveCredits(character.AccountId, amount))
             return false;
 
-        var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
-        character.SendPacket(new SCICSCashPointPacket(points.Credits));
+        PublishCredits(character);
         return true;
     }
 
@@ -130,7 +133,9 @@ public static class ItemWallet
         var template = ItemManager.Instance.GetTemplate(templateId);
         var per = CreditsOnTemplate(template);
         var total = ItemWalletRules.CreditsFromEffect(per, count);
-        return total > 0 && CreditCredits(character, total);
+        if (total <= 0 || character?.Inventory?.Bag == null)
+            return false;
+        return ConsumeThenCreditCredits(character, character.Inventory.Bag, templateId, count, total);
     }
 
     /// <summary>
@@ -142,6 +147,40 @@ public static class ItemWallet
             return 0;
         return ConvertCashContainer(character, character.Inventory.Bag)
                + ConvertCashContainer(character, character.Inventory.Warehouse);
+    }
+
+    public static bool ConsumeThenCreditCredits(
+        Character character,
+        ItemContainer container,
+        uint templateId,
+        int count,
+        int credits)
+    {
+        if (character == null || container == null || count <= 0 || credits <= 0)
+            return credits == 0 && count == 0;
+
+        var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, templateId, count, null);
+        if (consumed <= 0)
+            return false;
+
+        var pay = consumed == count
+            ? credits
+            : ItemWalletRules.CreditsFromEffect(credits / count, consumed);
+        if (pay <= 0)
+        {
+            TryRestore(character, container, templateId, consumed, "credits");
+            return false;
+        }
+
+        if (PersistWithRemoval(character, () => AccountLiveWallet.QueueCredits(character.AccountId, pay),
+                () => AccountLiveWallet.UnqueueCredits(character.AccountId, pay)))
+        {
+            PublishCredits(character);
+            return true;
+        }
+
+        TryRestore(character, container, templateId, consumed, "credits");
+        return false;
     }
 
     private static int ConvertCashContainer(Character character, ItemContainer container)
@@ -161,20 +200,39 @@ public static class ItemWallet
             if (per <= 0)
                 continue;
             var total = group.Sum(x => x.Count);
-            var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, group.Key, total, null);
-            if (consumed <= 0)
-                continue;
-            var credits = ItemWalletRules.CreditsFromEffect(per, consumed);
-            if (CreditCredits(character, credits))
-            {
-                credited += consumed;
-                continue;
-            }
-
-            TryRestore(character, container, group.Key, consumed, "credits");
+            var credits = ItemWalletRules.CreditsFromEffect(per, total);
+            if (ConsumeThenCreditCredits(character, container, group.Key, total, credits))
+                credited += total;
         }
 
         return credited;
+    }
+
+    private static bool PersistWithRemoval(Character character, Action queue, Action unqueue)
+    {
+        using (WorldSnapshotCommit.Begin(bypassCharges: false))
+        {
+            queue();
+            WorldSnapshotCommit.RequestFlush(bypassCharges: false);
+        }
+
+        if (WorldSnapshotCommit.AcceptedLast(bypassCharges: false, failNextPersist: false))
+            return true;
+
+        unqueue();
+        return false;
+    }
+
+    private static void PublishLoyalty(Character character)
+    {
+        character.BmPoint = AccountManager.Instance.GetAccountDetails(character.AccountId).Loyalty;
+        character.SendPacket(new SCBmPointPacket(character.BmPoint));
+    }
+
+    private static void PublishCredits(Character character)
+    {
+        var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
+        character.SendPacket(new SCICSCashPointPacket(points.Credits));
     }
 
     private static void TryRestore(

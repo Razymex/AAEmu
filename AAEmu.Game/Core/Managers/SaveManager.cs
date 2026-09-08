@@ -263,6 +263,7 @@ public class SaveManager(
     {
         AccountAttendanceManager.Instance.ConfirmSaved();
         ScheduleItemManager.Instance.ConfirmSaved();
+        AccountLiveWallet.ConfirmSaved();
         ItemManager.Instance?.ConfirmSaved();
         MailManager.Instance?.ConfirmSaved();
     }
@@ -271,6 +272,7 @@ public class SaveManager(
     {
         AccountAttendanceManager.Instance.DiscardPendingClears();
         ScheduleItemManager.Instance.DiscardPendingClears();
+        AccountLiveWallet.DiscardPendingClears();
         ItemManager.Instance?.DiscardPendingClears();
         MailManager.Instance?.DiscardPendingClears();
     }

@@ -10,6 +10,7 @@ using AAEmu.Game.GameData;
 using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
@@ -4018,6 +4019,7 @@ public partial class Character : Unit, ICharacter
             ArchePass?.Save(connection, transaction);
             AccountAttendanceManager.Instance.SaveForAccount(AccountId, connection, transaction);
             ScheduleItemManager.Instance.SaveForAccount(AccountId, connection, transaction);
+            AccountLiveWallet.SaveForAccount(AccountId, connection, transaction);
             Actability?.Save(connection, transaction);
             Appellations?.Save(connection, transaction);
             // Save active buffs that should persist across logout (SaveRuleId > 0)
@@ -4405,6 +4407,7 @@ public partial class Character : Unit, ICharacter
     {
         AccountAttendanceManager.Instance.ConfirmSaved();
         ScheduleItemManager.Instance.ConfirmSaved();
+        AccountLiveWallet.ConfirmSaved();
         ItemManager.Instance?.ConfirmSaved();
         MailManager.Instance?.ConfirmSaved();
     }
@@ -4413,6 +4416,7 @@ public partial class Character : Unit, ICharacter
     {
         AccountAttendanceManager.Instance.DiscardPendingClears();
         ScheduleItemManager.Instance.DiscardPendingClears();
+        AccountLiveWallet.DiscardPendingClears();
         ItemManager.Instance?.DiscardPendingClears();
         MailManager.Instance?.DiscardPendingClears();
     }
