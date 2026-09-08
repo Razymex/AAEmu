@@ -21,7 +21,9 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly ConcurrentDictionary<(uint AccountId, int Year, int Month), Dictionary<int, Claim>> _months = [];
-    private readonly ConcurrentDictionary<(uint AccountId, int Year, int Month), byte> _dirtyMonths = [];
+    private readonly ConcurrentDictionary<(uint AccountId, int Year, int Month), int> _dirtyMonths = [];
+    private int _dirtyStamp;
+    [ThreadStatic] private static List<((uint AccountId, int Year, int Month) Key, int Stamp)> t_written;
 
     private sealed class Claim
     {
@@ -97,13 +99,22 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         var unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var claim = new Claim { AttendedAt = unix, IsArchelife = isArchelife };
         var cashPacks = new List<AccountAttendanceReward>();
-        bool byMail;
+        var delivery = new Delivery();
         using (WorldSnapshotCommit.Begin(bypassCharges: false))
         {
             claims[day.Day] = claim;
-            _dirtyMonths[(character.AccountId, day.Year, day.Month)] = 1;
-            if (!TryGrant(character, grants, cashPacks, out byMail))
+            MarkDirty(character.AccountId, day.Year, day.Month);
+            if (!TryGrant(character, grants, cashPacks, delivery))
             {
+                claims.Remove(day.Day);
+                character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
+                SendMonth(character);
+                return;
+            }
+
+            if (!TryCreditPacks(character, cashPacks, delivery))
+            {
+                UndoDelivery(character, delivery);
                 claims.Remove(day.Day);
                 character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
                 SendMonth(character);
@@ -115,25 +126,15 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
 
         if (!WorldSnapshotCommit.AcceptedLast(bypassCharges: false, failNextPersist: false))
         {
+            UndoDelivery(character, delivery);
             claims.Remove(day.Day);
             character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
             SendMonth(character);
             return;
         }
 
-        foreach (var pack in cashPacks)
-        {
-            if (!ItemWallet.TryCreditCashPack(character, pack.ItemId, pack.ItemCount))
-            {
-                Logger.Error(
-                    "Account attendance claim saved but a cash pack did not credit for {0} item={1}",
-                    character.Name,
-                    pack.ItemId);
-            }
-        }
-
         character.SendPacket(new SCAccountAttendanceAddedPacket(true, unix, isArchelife));
-        character.SendPacket(new SCAccountAttendanceRewardedPacket(0, byMail));
+        character.SendPacket(new SCAccountAttendanceRewardedPacket(0, delivery.ByMail));
         SendMonth(character);
         Logger.Info(
             "Account attendance claimed {0} {1}-{2:00}-{3:00} archelife={4} byMail={5}",
@@ -142,16 +143,23 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             day.Month,
             day.Day,
             isArchelife,
-            byMail);
+            delivery.ByMail);
+    }
+
+    private sealed class Delivery
+    {
+        public bool ByMail { get; set; }
+        public BaseMail Mail { get; set; }
+        public List<(uint ItemId, int Count)> BagItems { get; } = [];
+        public int CashCredits { get; set; }
     }
 
     private static bool TryGrant(
         Character character,
         IReadOnlyList<AccountAttendanceReward> grants,
         List<AccountAttendanceReward> cashPacks,
-        out bool byMail)
+        Delivery delivery)
     {
-        byMail = false;
         var items = new List<AccountAttendanceReward>();
         foreach (var grant in grants)
         {
@@ -172,7 +180,6 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             character.Inventory.Bag.SpaceLeftForItem(x.ItemId) >= x.ItemCount);
         if (bagOk)
         {
-            var granted = new List<(uint ItemId, int Count)>();
             foreach (var grant in items)
             {
                 if (!character.Inventory.Bag.AcquireDefaultItemEx(
@@ -184,13 +191,13 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                         out _,
                         character.Id))
                 {
-                    foreach (var (itemId, count) in granted)
-                        character.Inventory.Bag.ConsumeItem(ItemTaskType.SkillEffectGainItem, itemId, count, null);
+                    UndoBag(character, delivery);
                     return false;
                 }
 
-                granted.Add((grant.ItemId, grant.ItemCount));
+                delivery.BagItems.Add((grant.ItemId, grant.ItemCount));
             }
+
             return true;
         }
 
@@ -238,8 +245,65 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             return false;
         }
 
-        byMail = true;
+        delivery.ByMail = true;
+        delivery.Mail = mail;
         return true;
+    }
+
+    private static bool TryCreditPacks(
+        Character character,
+        IReadOnlyList<AccountAttendanceReward> cashPacks,
+        Delivery delivery)
+    {
+        foreach (var pack in cashPacks)
+        {
+            var template = ItemManager.Instance.GetTemplate(pack.ItemId);
+            var add = ItemWalletRules.CreditsFromEffect(
+                ItemWallet.CreditsOnTemplate(template),
+                pack.ItemCount);
+            if (add <= 0 || !ItemWallet.TryCreditCashPack(character, pack.ItemId, pack.ItemCount))
+            {
+                if (delivery.CashCredits > 0 &&
+                    !ItemWallet.TryRefundCredits(character, delivery.CashCredits))
+                {
+                    Logger.Error(
+                        "Account attendance cash credit failed and the refund did not land for {0}",
+                        character.Name);
+                }
+
+                delivery.CashCredits = 0;
+                return false;
+            }
+
+            delivery.CashCredits += add;
+        }
+
+        return true;
+    }
+
+    private static void UndoDelivery(Character character, Delivery delivery)
+    {
+        UndoBag(character, delivery);
+        if (delivery.Mail != null)
+            MailManager.Instance.DiscardUnpersisted(delivery.Mail);
+        if (delivery.CashCredits > 0 &&
+            !ItemWallet.TryRefundCredits(character, delivery.CashCredits))
+        {
+            Logger.Error(
+                "Account attendance persist failed and the cash refund did not land for {0}",
+                character.Name);
+        }
+
+        delivery.CashCredits = 0;
+        delivery.Mail = null;
+        delivery.ByMail = false;
+    }
+
+    private static void UndoBag(Character character, Delivery delivery)
+    {
+        foreach (var (itemId, count) in delivery.BagItems)
+            character.Inventory.Bag.ConsumeItem(ItemTaskType.SkillEffectGainItem, itemId, count, null);
+        delivery.BagItems.Clear();
     }
 
     private bool TryGetMonth(uint accountId, int year, int month, out Dictionary<int, Claim> claims)
@@ -290,17 +354,31 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         return true;
     }
 
+    private void MarkDirty(uint accountId, int year, int month) =>
+        _dirtyMonths[(accountId, year, month)] = Interlocked.Increment(ref _dirtyStamp);
+
+    public void ConfirmSaved()
+    {
+        if (t_written == null)
+            return;
+        foreach (var (key, stamp) in t_written)
+            AccountLiveDirty.ClearIfUnchanged(_dirtyMonths, key, stamp);
+
+        t_written = null;
+    }
+
+    public void DiscardPendingClears() => t_written = null;
+
     public void SaveForAccount(uint accountId, MySqlConnection connection, MySqlTransaction transaction)
     {
         foreach (var key in _dirtyMonths.Keys)
         {
             if (key.AccountId != accountId)
                 continue;
-            if (!_months.TryGetValue((key.AccountId, key.Year, key.Month), out var claims))
-            {
-                _dirtyMonths.TryRemove(key, out _);
+            if (!_dirtyMonths.TryGetValue(key, out var stamp))
                 continue;
-            }
+            if (!_months.TryGetValue((key.AccountId, key.Year, key.Month), out var claims))
+                continue;
 
             using (var command = connection.CreateCommand())
             {
@@ -340,7 +418,8 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                 command.ExecuteNonQuery();
             }
 
-            _dirtyMonths.TryRemove(key, out _);
+            t_written ??= [];
+            t_written.Add((key, stamp));
         }
     }
 }

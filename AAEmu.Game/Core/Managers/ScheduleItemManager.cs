@@ -20,7 +20,9 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly ConcurrentDictionary<(uint AccountId, int ScheduleId), Progress> _progress = [];
-    private readonly ConcurrentDictionary<(uint AccountId, int ScheduleId), byte> _dirty = [];
+    private readonly ConcurrentDictionary<(uint AccountId, int ScheduleId), int> _dirty = [];
+    private int _dirtyStamp;
+    [ThreadStatic] private static List<((uint AccountId, int ScheduleId) Key, int Stamp)> t_written;
 
     private sealed class Progress
     {
@@ -220,7 +222,19 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
     }
 
     private void MarkDirty(uint accountId, int scheduleId) =>
-        _dirty[(accountId, scheduleId)] = 1;
+        _dirty[(accountId, scheduleId)] = Interlocked.Increment(ref _dirtyStamp);
+
+    public void ConfirmSaved()
+    {
+        if (t_written == null)
+            return;
+        foreach (var (key, stamp) in t_written)
+            AccountLiveDirty.ClearIfUnchanged(_dirty, key, stamp);
+
+        t_written = null;
+    }
+
+    public void DiscardPendingClears() => t_written = null;
 
     public void SaveForAccount(uint accountId, MySqlConnection connection, MySqlTransaction transaction)
     {
@@ -228,14 +242,14 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         {
             if (key.AccountId != accountId)
                 continue;
-            if (!_progress.TryGetValue(key, out var progress))
-            {
-                _dirty.TryRemove(key, out _);
+            if (!_dirty.TryGetValue(key, out var stamp))
                 continue;
-            }
+            if (!_progress.TryGetValue(key, out var progress))
+                continue;
 
             PersistOn(connection, transaction, key.AccountId, key.ScheduleId, progress);
-            _dirty.TryRemove(key, out _);
+            t_written ??= [];
+            t_written.Add((key, stamp));
         }
     }
 

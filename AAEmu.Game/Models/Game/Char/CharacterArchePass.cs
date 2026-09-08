@@ -606,15 +606,8 @@ public sealed class CharacterArchePass
         if (Owner == null || Owner.Id == 0)
             return;
 
-        try
-        {
-            Persist(connection, transaction);
-            PersistMissions(connection, transaction);
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn(ex, "ArchePass save skipped for {0}", Owner.Name);
-        }
+        Persist(connection, transaction);
+        PersistMissions(connection, transaction);
     }
 
     private ArchePassProgress LiveProgress()

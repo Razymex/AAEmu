@@ -3828,6 +3828,7 @@ public partial class Character : Unit, ICharacter
                     if (!saved)
                     {
                         transaction.Rollback();
+                        DiscardAccountLiveClears();
                         return false;
                     }
 
@@ -3836,6 +3837,7 @@ public partial class Character : Unit, ICharacter
                     // face/hair/body appearance parts — must be written now, not left for the periodic SaveManager.
                     ItemManager.Instance.Save(sqlConnection, transaction);
                     transaction.Commit();
+                    ConfirmAccountLiveSaved();
                 }
                 catch (Exception e)
                 {
@@ -3850,6 +3852,7 @@ public partial class Character : Unit, ICharacter
                         // Really failed here
                         Logger.Fatal(eRollback, $"Character save rollback failed for {Id} - {Name}");
                     }
+                    DiscardAccountLiveClears();
                 }
             }
         }
@@ -4396,5 +4399,17 @@ public partial class Character : Unit, ICharacter
     public override string DebugName()
     {
         return base.DebugName() + " (" + Id + ")";
+    }
+
+    private static void ConfirmAccountLiveSaved()
+    {
+        AccountAttendanceManager.Instance.ConfirmSaved();
+        ScheduleItemManager.Instance.ConfirmSaved();
+    }
+
+    private static void DiscardAccountLiveClears()
+    {
+        AccountAttendanceManager.Instance.DiscardPendingClears();
+        ScheduleItemManager.Instance.DiscardPendingClears();
     }
 }

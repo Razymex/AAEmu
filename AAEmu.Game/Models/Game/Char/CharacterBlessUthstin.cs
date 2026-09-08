@@ -678,14 +678,7 @@ public sealed class CharacterBlessUthstin
         if (Owner == null)
             return;
 
-        try
-        {
-            Persist(connection, transaction);
-        }
-        catch (MySqlException ex)
-        {
-            Logger.Warn(ex, "BlessUthstin save skipped for {0}", Owner.Name);
-        }
+        Persist(connection, transaction);
     }
 
     private int _pendingSelectPage = -1;

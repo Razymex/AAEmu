@@ -91,6 +91,19 @@ public static class ItemWallet
         return true;
     }
 
+    public static bool TryRefundCredits(Character character, int amount)
+    {
+        if (character == null || amount <= 0)
+            return amount == 0;
+
+        if (!AccountManager.Instance.RemoveCredits(character.AccountId, amount))
+            return false;
+
+        var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
+        character.SendPacket(new SCICSCashPointPacket(points.Credits));
+        return true;
+    }
+
     /// <summary>
     /// Credits on one coupon, from its use skill's <c>GiveCashPoint</c> value1. Zero if the
     /// item is not a cash pack.
