@@ -14,18 +14,36 @@ public class BaseMail
     private MailBody _body;
     private DateTime _openDate;
 
-    public long Id { get => _id; set { _id = value; _isDirty = true; } }
-    public MailType MailType { get => _mailType; set { _mailType = value; _isDirty = true; } }
-    public string Title { get => _title; set { _title = value; _isDirty = true; } }
-    public string ReceiverName { get => _receiverName; set { _receiverName = value; _isDirty = true; } }
-    public DateTime OpenDate { get => _openDate; set { _openDate = value; _isDirty = true; } }
+    public long Id { get => _id; set { _id = value; MarkDirty(); } }
+    public MailType MailType { get => _mailType; set { _mailType = value; MarkDirty(); } }
+    public string Title { get => _title; set { _title = value; MarkDirty(); } }
+    public string ReceiverName { get => _receiverName; set { _receiverName = value; MarkDirty(); } }
+    public DateTime OpenDate { get => _openDate; set { _openDate = value; MarkDirty(); } }
 
-    public MailHeader Header { get => _header; set { _header = value; _isDirty = true; } }
-    public MailBody Body { get => _body; set { _body = value; _isDirty = true; } }
+    public MailHeader Header { get => _header; set { _header = value; MarkDirty(); } }
+    public MailBody Body { get => _body; set { _body = value; MarkDirty(); } }
 
     // Local helpers
     public bool IsDelivered { get; set; }
-    public bool IsDirty { get => _isDirty; set => _isDirty = value; }
+    public int DirtyStamp { get; private set; }
+
+    public bool IsDirty
+    {
+        get => _isDirty;
+        set
+        {
+            if (value)
+                MarkDirty();
+            else
+                _isDirty = false;
+        }
+    }
+
+    private void MarkDirty()
+    {
+        _isDirty = true;
+        DirtyStamp++;
+    }
 
     /// <summary>
     /// Staged on a caller transaction that has not committed. Mailbox list, claim, and

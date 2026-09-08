@@ -31,7 +31,26 @@ public class Item : PacketMarshaler, IComparable<Item>
     private int _chargeCount;
 
     [JsonIgnore]
-    public bool IsDirty { get => _isDirty; set => _isDirty = value; }
+    public int DirtyStamp { get; private set; }
+
+    [JsonIgnore]
+    public bool IsDirty
+    {
+        get => _isDirty;
+        set
+        {
+            if (value)
+                MarkDirty();
+            else
+                _isDirty = false;
+        }
+    }
+
+    private void MarkDirty()
+    {
+        _isDirty = true;
+        DirtyStamp++;
+    }
 
     /// <summary>
     /// Staged on an uncommitted delivery. The periodic world save must not write this
@@ -41,16 +60,16 @@ public class Item : PacketMarshaler, IComparable<Item>
     public bool ExcludeFromWorldSave { get; set; }
 
     [JsonProperty]
-    public byte WorldId { get => _worldId; set { _worldId = value; _isDirty = true; } }
+    public byte WorldId { get => _worldId; set { _worldId = value; MarkDirty(); } }
 
     [JsonProperty]
-    public ulong OwnerId { get => _ownerId; set { _ownerId = value; _isDirty = true; } }
+    public ulong OwnerId { get => _ownerId; set { _ownerId = value; MarkDirty(); } }
 
     [JsonProperty]
-    public ulong Id { get => _id; set { _id = value; _isDirty = true; } }
+    public ulong Id { get => _id; set { _id = value; MarkDirty(); } }
 
     [JsonProperty]
-    public uint TemplateId { get => _templateId; set { _templateId = value; _isDirty = true; } }
+    public uint TemplateId { get => _templateId; set { _templateId = value; MarkDirty(); } }
 
     [JsonIgnore]
     public ItemTemplate Template { get; set; }
@@ -59,38 +78,38 @@ public class Item : PacketMarshaler, IComparable<Item>
     public virtual uint DetailBytesLength { get; } = 0;
 
     [JsonProperty]
-    public SlotType SlotType { get => _slotType; set { _slotType = value; _isDirty = true; } }
+    public SlotType SlotType { get => _slotType; set { _slotType = value; MarkDirty(); } }
 
     [JsonProperty]
-    public int Slot { get => _slot; set { _slot = value; _isDirty = true; } }
+    public int Slot { get => _slot; set { _slot = value; MarkDirty(); } }
 
     [JsonProperty]
-    public byte Grade { get => _grade; set { _grade = value; _isDirty = true; } }
+    public byte Grade { get => _grade; set { _grade = value; MarkDirty(); } }
 
     [JsonProperty]
-    public ItemFlag ItemFlags { get => _itemFlags; set { _itemFlags = value; _isDirty = true; } }
+    public ItemFlag ItemFlags { get => _itemFlags; set { _itemFlags = value; MarkDirty(); } }
 
     [JsonProperty]
-    public int Count { get => _count; set { _count = value; _isDirty = true; } }
+    public int Count { get => _count; set { _count = value; MarkDirty(); } }
 
     [JsonProperty]
-    public int LifespanMins { get => _lifespanMins; set { _lifespanMins = value; _isDirty = true; } }
+    public int LifespanMins { get => _lifespanMins; set { _lifespanMins = value; MarkDirty(); } }
 
     [JsonProperty]
-    public uint MadeUnitId { get => _madeUnitId; set { _madeUnitId = value; _isDirty = true; } }
+    public uint MadeUnitId { get => _madeUnitId; set { _madeUnitId = value; MarkDirty(); } }
     public DateTime ChargeUseSkillTime { get; set; }
 
     [JsonProperty]
-    public DateTime CreateTime { get => _createTime; set { _createTime = value; _isDirty = true; } }
+    public DateTime CreateTime { get => _createTime; set { _createTime = value; MarkDirty(); } }
 
     [JsonProperty]
-    public DateTime UnsecureTime { get => _unsecureTime; set { _unsecureTime = value; _isDirty = true; } }
+    public DateTime UnsecureTime { get => _unsecureTime; set { _unsecureTime = value; MarkDirty(); } }
 
     [JsonProperty]
-    public DateTime UnpackTime { get => _unpackTime; set { _unpackTime = value; _isDirty = true; } }
+    public DateTime UnpackTime { get => _unpackTime; set { _unpackTime = value; MarkDirty(); } }
 
     [JsonProperty]
-    public uint ImageItemTemplateId { get => _imageItemTemplateId; set { _imageItemTemplateId = value; _isDirty = true; } }
+    public uint ImageItemTemplateId { get => _imageItemTemplateId; set { _imageItemTemplateId = value; MarkDirty(); } }
 
     /// <summary>
     /// Internal representation of the exact time a item will expire (UTC)
@@ -104,7 +123,7 @@ public class Item : PacketMarshaler, IComparable<Item>
             if (_expirationTime != value)
             {
                 _expirationTime = value;
-                _isDirty = true;
+                MarkDirty();
             }
         }
     }
@@ -119,7 +138,7 @@ public class Item : PacketMarshaler, IComparable<Item>
         set
         {
             _expirationOnlineMinutesLeft = value;
-            _isDirty = true;
+            MarkDirty();
         }
     }
 
@@ -134,7 +153,7 @@ public class Item : PacketMarshaler, IComparable<Item>
                 SetFlag(ItemFlag.HasUCC);
             else
                 RemoveFlag(ItemFlag.HasUCC);
-            _isDirty = true;
+            MarkDirty();
         }
     }
 
@@ -147,7 +166,7 @@ public class Item : PacketMarshaler, IComparable<Item>
             if (_chargeStartTime == value)
                 return;
             _chargeStartTime = value;
-            _isDirty = true;
+            MarkDirty();
         }
     }
 
@@ -160,7 +179,7 @@ public class Item : PacketMarshaler, IComparable<Item>
             if (_chargeCount == value)
                 return;
             _chargeCount = value;
-            _isDirty = true;
+            MarkDirty();
         }
     }
 
@@ -209,7 +228,7 @@ public class Item : PacketMarshaler, IComparable<Item>
         OwnerId = 0;
         Slot = -1;
         _holdingContainer = null;
-        _isDirty = true;
+        MarkDirty();
     }
 
     public Item(byte worldId)
@@ -218,7 +237,7 @@ public class Item : PacketMarshaler, IComparable<Item>
         OwnerId = 0;
         Slot = -1;
         _holdingContainer = null;
-        _isDirty = true;
+        MarkDirty();
     }
 
     public Item(ulong id, ItemTemplate template, int count)
@@ -231,7 +250,7 @@ public class Item : PacketMarshaler, IComparable<Item>
         Count = count;
         Slot = -1;
         _holdingContainer = null;
-        _isDirty = true;
+        MarkDirty();
     }
 
     public Item(byte worldId, ulong id, ItemTemplate template, int count)
@@ -244,7 +263,7 @@ public class Item : PacketMarshaler, IComparable<Item>
         Count = count;
         Slot = -1;
         _holdingContainer = null;
-        _isDirty = true;
+        MarkDirty();
     }
 
     public override void Read(PacketStream stream)

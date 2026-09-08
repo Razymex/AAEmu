@@ -26,7 +26,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     public Dictionary<long, BaseMail> AllPlayerMails => _allPlayerMails;
     private readonly Dictionary<long, BaseMail> _pendingMails = [];
     private List<long> _deletedMailIds = [];
-    [ThreadStatic] private static List<BaseMail> t_writtenMails;
+    [ThreadStatic] private static List<(BaseMail Mail, int Stamp)> t_writtenMails;
     [ThreadStatic] private static List<long> t_deletedWritten;
     // Unused: private object _lock = new();
 
@@ -482,7 +482,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                 continue;
             WriteMail(mtbs.Value, connection, transaction);
             t_writtenMails ??= [];
-            t_writtenMails.Add(mtbs.Value);
+            t_writtenMails.Add((mtbs.Value, mtbs.Value.DirtyStamp));
             updatedCount++;
         }
 
@@ -543,8 +543,11 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     {
         if (t_writtenMails != null)
         {
-            foreach (var mail in t_writtenMails)
-                mail.IsDirty = false;
+            foreach (var (mail, stamp) in t_writtenMails)
+            {
+                if (AccountLiveDirty.ShouldClear(stamp, mail.DirtyStamp))
+                    mail.IsDirty = false;
+            }
         }
 
         if (t_deletedWritten != null)

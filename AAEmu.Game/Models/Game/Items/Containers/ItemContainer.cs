@@ -21,7 +21,19 @@ public class ItemContainer
     private int _freeSlotCount;
     private ICharacter _owner;
     private uint _ownerId;
-    public bool IsDirty { get; set; }
+    private bool _isDirty;
+    public int DirtyStamp { get; private set; }
+
+    public bool IsDirty
+    {
+        get => _isDirty;
+        set
+        {
+            _isDirty = value;
+            if (value)
+                DirtyStamp++;
+        }
+    }
     private readonly SlotType _containerType;
     private ulong _containerId;
 

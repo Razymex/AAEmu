@@ -25,4 +25,14 @@ public class AccountLiveDirtyTests
         AccountLiveDirty.ClearIfUnchanged(dirty, 7u, 1);
         await Assert.That(dirty[7]).IsEqualTo(2);
     }
+
+    [Test]
+    public async Task DirtyStamp_KeepsAChangeMadeAfterTheWrite()
+    {
+        var mail = new AAEmu.Game.Models.Game.Mails.BaseMail();
+        var written = mail.DirtyStamp;
+        mail.Title = "after write";
+        await Assert.That(AccountLiveDirty.ShouldClear(written, mail.DirtyStamp)).IsFalse();
+        await Assert.That(mail.IsDirty).IsTrue();
+    }
 }
