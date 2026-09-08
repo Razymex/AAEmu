@@ -5,6 +5,7 @@ using AAEmu.Commons.Utils;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models;
@@ -568,7 +569,8 @@ public class CharacterManager(
         {
             Id = characterId, TemplateId = characterId, AccountId = connection.AccountId, Name = name,
             Race = race,
-            Gender = gender
+            Gender = gender,
+            Point = AccountPatron.ResolvePoint(0)
         };
         character.Transform.ApplyWorldSpawnPosition(template.SpawnPosition);
         if (WorldIntegration.ZoneAuthority
@@ -659,6 +661,8 @@ public class CharacterManager(
         character.Abilities = new CharacterAbilities(character);
         character.Abilities.SetAbility(character.Ability1, 0);
         character.AbilitySets = new CharacterAbilitySets(character);
+        character.BlessUthstin = new CharacterBlessUthstin(character);
+        character.ArchePass = new CharacterArchePass(character);
 
         character.Actability = new CharacterActability(character);
         foreach (var (id, actabilityTemplate) in _actabilities)

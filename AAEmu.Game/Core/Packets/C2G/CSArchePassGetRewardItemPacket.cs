@@ -3,13 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Claim one free or premium reward tier on the in-progress pass.</summary>
 public class CSArchePassGetRewardItemPacket() : GamePacket(CSOffsets.CSArchePassGetRewardItemPacket, 1)
 {
     public uint Tier { get; private set; }
@@ -19,5 +13,6 @@ public class CSArchePassGetRewardItemPacket() : GamePacket(CSOffsets.CSArchePass
     {
         Tier = stream.ReadUInt32();
         Premium = stream.ReadBoolean();
+        Connection.ActiveChar?.ArchePass?.TryClaim(Tier, Premium);
     }
 }

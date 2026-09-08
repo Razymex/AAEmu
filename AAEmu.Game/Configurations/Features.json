@@ -25,7 +25,7 @@
             "freeLpRaise": true,
             "use_slash_open_chat": true,
             "useCharacterListPage": true,
-            "buyPremiuminSelChar": true,
+            "buyPremiuminSelChar": false,
             "premiumUserServer": true,
             "show_premium_hud": true,
             "loadingTipOfDay": true,
@@ -140,7 +140,7 @@
             "fset_9_6_unknown": true,       // mate item equip validation (CheckMateItemEquip)
             "fset_11_2_unknown": true,      // doodad descriptor lookup
             "fset_12_0_unknown": true,      // inventory slot swap — CSSwapItemsPacket (0x67), bag slots only
-            "fset_12_1_unknown": true,      // in-bag item repair cost/slot collector (pairs with itemRepairInBag)
+            "fset_12_1_unknown": false,     // bag repair requires special-effect 121; this compact has none
             "fset_13_0_unknown": true,      // movement packet path (CSMoveUnit)
             "fset_13_1_unknown": true,      // skill use / buff removal (RemoveBuff)
             "fset_13_3_unknown": true,      // premium service message + mail take-attachment packets

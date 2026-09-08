@@ -9,15 +9,13 @@ public class CSRepairAllEquipmentsPacket() : GamePacket(CSOffsets.CSRepairAllEqu
     public override void Read(PacketStream stream)
     {
         var autoUseAAPoint = stream.ReadBoolean();
+        var inBag = stream.ReadBoolean();
 
-        Logger.Debug("RepairAllEquipments, AutoUseAAPoint: {0}", autoUseAAPoint);
+        Logger.Debug("RepairAllEquipments, AutoUseAAPoint: {0}, InBag: {1}", autoUseAAPoint, inBag);
 
-        var items = new List<Item>();
-        foreach (var item in Connection.ActiveChar.Inventory.Equipment.Items)
-        {
-            items.Add(item);
-        }
-
-        Connection.ActiveChar.DoRepair(items, autoUseAAPoint);
+        var source = inBag
+            ? Connection.ActiveChar.Inventory.Bag.Items
+            : Connection.ActiveChar.Inventory.Equipment.Items;
+        Connection.ActiveChar.DoRepair([.. source], autoUseAAPoint);
     }
 }

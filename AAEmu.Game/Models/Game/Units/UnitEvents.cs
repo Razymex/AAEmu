@@ -59,6 +59,7 @@ public class UnitEvents
     public EventHandler<OnExitSphereArgs> OnExitSphere = delegate { };
     public EventHandler<OnCraftArgs> OnCraft = delegate { };
     public EventHandler<OnLaborPowerArgs> OnLaborPower = delegate { };
+    public EventHandler<OnQuestProgressStatArgs> OnQuestProgressStat = delegate { };
     public EventHandler<OnZoneKillArgs> OnZoneKill = delegate { };
     // public EventHandler<OnZoneMonsterHuntArgs> OnZoneMonsterHunt = delegate { }; // Integrated into OnZoneKill
     public EventHandler<OnCinemaStartedArgs> OnCinemaStarted = delegate { };
@@ -171,6 +172,12 @@ public class OnLaborPowerArgs : EventArgs
 
     /// <summary>Actability group for the spend (0 if untagged).</summary>
     public uint ActabilityGroupId { get; set; }
+}
+
+public class OnQuestProgressStatArgs : EventArgs
+{
+    public QuestProgressStatKind Kind { get; set; }
+    public int Amount { get; set; }
 }
 
 public class OnExpressFireArgs : EventArgs

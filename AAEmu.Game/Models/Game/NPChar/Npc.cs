@@ -921,6 +921,7 @@ public partial class Npc : Unit
         {
             QuestManager.Instance.DoOnMonsterHuntEvents(characterKiller, this); // No eligible owner, but the killer is a character.
             characterKiller.AddExp(KillExp, true);
+            AwardNpcHonor(characterKiller);
             var mateList = characterKiller.ParentWorld.MateManager.GetActiveMates(characterKiller.Id);
             foreach (var mate in mateList)
             {
@@ -1025,6 +1026,7 @@ public partial class Npc : Unit
                     }
                 }
 
+                AwardNpcHonor(pl);
                 // character.Quests.OnKill(this);
                 // инициируем событие
                 // Task.Run(() => QuestManager.Instance.DoOnMonsterHuntEvents(character, this));
@@ -1058,6 +1060,16 @@ public partial class Npc : Unit
             Despawn = DateTime.UtcNow.Add(delay);
             ParentWorld.SpawnManager.AddDespawn(this);
         }
+    }
+
+    private void AwardNpcHonor(Character player)
+    {
+        var honor = AttributeGainRules.ApplyGain(
+            Template.HonorPoint,
+            (int)player.CalculateWithBonuses(0, UnitAttribute.HonorPointGainNpcKill),
+            (int)player.CalculateWithBonuses(0, UnitAttribute.HonorPointGainNpcKillMul));
+        if (honor != 0)
+            player.ChangeGamePoints(GamePointKind.Honor, honor);
     }
 
     private void ClearAllAggroTargetsAndCheckCombatState()

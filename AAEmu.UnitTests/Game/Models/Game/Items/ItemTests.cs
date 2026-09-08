@@ -267,6 +267,12 @@ public class ItemTests
     }
 
     [Test]
+    public async Task BmMileage_ReturnsCorrectId()
+    {
+        await Assert.That(Item.BmMileage).IsEqualTo(28586u);
+    }
+
+    [Test]
     public async Task TaxCertificate_ReturnsCorrectId()
     {
         // Act & Assert

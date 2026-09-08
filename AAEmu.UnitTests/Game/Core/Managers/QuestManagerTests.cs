@@ -179,6 +179,16 @@ public class QuestManagerTests
     #region CheckGroupItem Tests
 
     [Test]
+    public async Task CheckContextGroup_WithNonExistentGroupId_ReturnsFalse()
+    {
+        var manager = CreateManager();
+
+        var result = manager.CheckContextGroup(37, 9044);
+
+        await Assert.That(result).IsFalse();
+    }
+
+    [Test]
     public async Task CheckGroupItem_WithNonExistentGroupId_ReturnsFalse()
     {
         var manager = CreateManager();

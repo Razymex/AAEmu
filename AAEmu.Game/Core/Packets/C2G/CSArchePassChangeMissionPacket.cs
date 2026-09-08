@@ -3,13 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Re-roll an in-progress Arche Pass today-assignment. Body is <c>today_quest_steps.real_step</c>.</summary>
 public class CSArchePassChangeMissionPacket() : GamePacket(CSOffsets.CSArchePassChangeMissionPacket, 1)
 {
     public uint RealStep { get; private set; }
@@ -17,5 +11,6 @@ public class CSArchePassChangeMissionPacket() : GamePacket(CSOffsets.CSArchePass
     public override void Read(PacketStream stream)
     {
         RealStep = stream.ReadUInt32();
+        Connection.ActiveChar?.ArchePass?.TryChangeMission(RealStep);
     }
 }

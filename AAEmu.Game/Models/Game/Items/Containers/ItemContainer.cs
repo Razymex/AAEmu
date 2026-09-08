@@ -627,6 +627,9 @@ public class ItemContainer
             return true;
         }
 
+        if (ItemWalletRules.CreditOnAcquire(templateId, ContainerType) && Owner is Character walletOwner)
+            return ItemWallet.CreditLoyalty(walletOwner, amountToAdd);
+
         GetAllItemsByTemplate(templateId, gradeToAdd, out var currentItems, out var currentTotalItemCount);
         var template = ItemManager.Instance.GetTemplate(templateId);
         if (template == null)
@@ -778,6 +781,9 @@ public class ItemContainer
         {
             return 0; // Invalid item templateId
         }
+
+        if (ItemWalletRules.CreditOnAcquire(templateId, ContainerType))
+            return int.MaxValue;
 
         // Special handling for money
         if (templateId == Item.Coins)

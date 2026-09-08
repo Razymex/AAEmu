@@ -5,7 +5,7 @@ using AAEmu.Game.Models.Game.Units.Static;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
-public class SCUnitDeathPacket(uint objId, KillReason killReason, Unit killer = null)
+public class SCUnitDeathPacket(uint objId, KillReason killReason, Unit killer = null, int lostExp = 0, byte deathDurabilityLossRatio = 0)
     : GamePacket(SCOffsets.SCUnitDeathPacket, 1)
 {
     //   Bc victim + u8 killReason
@@ -28,8 +28,8 @@ public class SCUnitDeathPacket(uint objId, KillReason killReason, Unit killer = 
         stream.Write(15000u); // resurrectionWaitingTime
         stream.Write(0u);     // specialResurrectionWaitingTime
         stream.Write(0u);     // autoResurrectionWaitingTime
-        stream.Write(0);      // lostExp
-        stream.Write((byte)0); // deathDurabilityLossRatio
+        stream.Write(lostExp);
+        stream.Write(deathDurabilityLossRatio);
 
         var killerId = killer?.ObjId ?? NoKillerObjId;
         stream.WriteBc(killerId);

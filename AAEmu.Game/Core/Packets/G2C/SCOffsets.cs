@@ -579,6 +579,9 @@ public static class SCOffsets
     public const ushort SCAppellationStampLifespanUpdatedPacket = 0x384;
     public const ushort SCArchePassChangeMissionPacket = 0x342;
     public const ushort SCArchePassMissionCountPacket = 0x341;
+    public const ushort SCArchePassesPacket = 0x33D;
+    public const ushort SCCompletedArchePassesPacket = 0x33E;
+    public const ushort SCUpdateArchePassPacket = 0x33F;
     public const ushort SCAttackFactionPacket = 0x327;
     public const ushort SCBalanceLevelChangedPacket = 0x141;
     public const ushort SCBattleFieldBestRatingRewardPacket = 0x2E7;

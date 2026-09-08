@@ -26,6 +26,7 @@ using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Buffs;
 using AAEmu.Game.Models.Game.Skills.SkillControllers;
 using AAEmu.Game.Models.Game.Static;
+using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
@@ -787,21 +788,13 @@ public partial class Character : Unit, ICharacter
     public byte Camp { get; set; }
 
     /// <summary>
-    /// Premium grade resolved from <see cref="Point"/> against premium_grades. 0 is no premium.
-    /// Pinned to the highest grade when Account.ForceMaxPremiumGrade is set.
+    /// Premium grade resolved from <see cref="Point"/> against premium_grades, then the Patron floor.
     /// </summary>
     public uint PremiumGrade
     {
         get
         {
-            if (AppConfiguration.Instance.Account?.ForceMaxPremiumGrade == true)
-            {
-                var maxGrade = PremiumGameData.Instance.MaxGradeId;
-                if (maxGrade > 0)
-                    return maxGrade;
-            }
-
-            return PremiumGameData.Instance.GetGradeForPoint(Point);
+            return AccountPatron.ResolveGrade(PremiumGameData.Instance.GetGradeForPoint(Point));
         }
     }
 
@@ -815,12 +808,7 @@ public partial class Character : Unit, ICharacter
     {
         get
         {
-            var point = (uint)Math.Max(0, Point);
-            if (AppConfiguration.Instance.Account?.ForceMaxPremiumGrade != true)
-                return point;
-
-            var threshold = PremiumGameData.Instance.GetGrade(PremiumGameData.Instance.MaxGradeId)?.Point ?? 0;
-            return Math.Max(point, (uint)Math.Max(0, threshold));
+            return (uint)AccountPatron.ResolvePoint(Point);
         }
     }
 
@@ -895,6 +883,8 @@ public partial class Character : Unit, ICharacter
     public CharacterAppellations Appellations { get; set; }
     public CharacterAbilities Abilities { get; set; }
     public CharacterAbilitySets AbilitySets { get; set; }
+    public CharacterBlessUthstin BlessUthstin { get; set; } = new();
+    public CharacterArchePass ArchePass { get; set; } = new();
     public CharacterPortals Portals { get; set; }
     public CharacterFriends Friends { get; set; }
     public CharacterBlocked Blocked { get; set; }
@@ -2101,6 +2091,17 @@ public partial class Character : Unit, ICharacter
         }
     }
 
+    [UnitAttribute(UnitAttribute.ExpMul)]
+    public float ExpMul
+    {
+        get
+        {
+            var res = 0.0;
+            res = CalculateWithBonuses(res, UnitAttribute.ExpMul);
+            return (float)res;
+        }
+    }
+
     [UnitAttribute(UnitAttribute.DropRateMul)]
     public float DropRateMul
     {
@@ -2203,6 +2204,8 @@ public partial class Character : Unit, ICharacter
         if (expDelta > 0)
         {
             expDelta = (int)(expDelta * AppConfiguration.Instance.World.ExpRate);
+            var expMul = GetAttribute(UnitAttribute.ExpMul, 0f) + 100f;
+            expDelta = (int)Math.Clamp(Math.Round(expDelta * (expMul / 100f)), 0, int.MaxValue);
         }
 
         // level before SCLevelChanged arrives, and accepts positive deltas only. Levels that owe an
@@ -2240,6 +2243,15 @@ public partial class Character : Unit, ICharacter
             Abilities.AddActiveExp(expDelta);
         
         SendPacket(new SCExpChangedPacket(ObjId, expDelta, shouldAddAbilityExp));
+
+        if (expDelta > 0)
+        {
+            Events?.OnQuestProgressStat(this, new OnQuestProgressStatArgs
+            {
+                Kind = QuestProgressStatKind.Exp,
+                Amount = expDelta
+            });
+        }
 
         if (leveledUp)
             ApplyLevelUpBenefits();
@@ -2614,39 +2626,33 @@ public partial class Character : Unit, ICharacter
     }
 
     /// <summary>
-    /// Grants the buff premium_grades attaches to this character's grade and strips the buffs of every
-    /// other grade.
+    /// Syncs the grade buff and every active membership buff. Stacked Patron is 7149 + 7150;
+    /// a higher <c>premium_grades</c> row replaces 7149 and keeps 7150.
     /// </summary>
-    /// <remarks>
-    /// premium_grades.buff_id was loaded into <see cref="Models.Game.Premium.PremiumGrade.BuffId"/> and
-    /// never used by anything. It is how ArcheAge carries Patron status on the character - grade 6 is
-    /// buff 7153, duration 0 (permanent) and flagged system - and the client evidently keys its Patron
-    /// readout off it rather than off the grade the server sends: with the grade correct in both
-    /// SCUpdatePremiumPoint and UnitState, the client still displayed the free tier's numbers.
-    /// The free tier has no buff of its own, so grade 1 only removes.
-    /// </remarks>
     public void ApplyPremiumGradeBuff()
     {
-        var wanted = PremiumGameData.Instance.GetGrade(PremiumGrade)?.BuffId ?? 0;
+        var wanted = AccountPatron.WantedBuffIds(AccountId, PremiumGrade).ToHashSet();
 
-        foreach (var buffId in PremiumGameData.Instance.GradeBuffIds)
+        foreach (var buffId in AccountPatron.KnownBuffIds())
         {
-            if (buffId == wanted)
+            if (wanted.Contains(buffId))
                 continue;
             if (Buffs.CheckBuff(buffId))
                 Buffs.RemoveBuff(buffId);
         }
 
-        if (wanted == 0 || Buffs.CheckBuff(wanted))
-            return;
-
-        if (SkillManager.Instance.GetBuffTemplate(wanted) == null)
+        foreach (var buffId in wanted)
         {
-            Logger.Warn("Premium grade {0} names buff {1}, which is not in the buff templates", PremiumGrade, wanted);
-            return;
-        }
+            if (Buffs.CheckBuff(buffId))
+                continue;
+            if (SkillManager.Instance.GetBuffTemplate(buffId) == null)
+            {
+                Logger.Warn("Patron buff {0} (grade {1}) is not in the buff templates", buffId, PremiumGrade);
+                continue;
+            }
 
-        Buffs.AddBuff(wanted, this);
+            Buffs.AddBuff(buffId, this);
+        }
     }
 
     public void ChangeGamePoints(GamePointKind kind, int change)
@@ -2709,6 +2715,15 @@ public partial class Character : Unit, ICharacter
         // packet below - every GamePointKind goes through this one choke point.
         SendPacket(new SCCharacterGamePointsPacket(this));
         SendPacket(new SCGamePointChangedPacket((byte)kind, change));
+
+        if (change > 0 && kind is GamePointKind.Honor or GamePointKind.Vocation)
+        {
+            Events?.OnQuestProgressStat(this, new OnQuestProgressStatArgs
+            {
+                Kind = kind == GamePointKind.Honor ? QuestProgressStatKind.Honor : QuestProgressStatKind.Living,
+                Amount = change
+            });
+        }
     }
 
     public override int GetAbLevel(AbilityType type)
@@ -3170,7 +3185,6 @@ public partial class Character : Unit, ICharacter
 
     public void DoRepair(List<Item> items, bool useAaPoint)
     {
-        var tasks = new List<ItemTask>();
         var repairs = new List<(EquipItem EquipItem, Item Item)>();
         long repairCost = 0;
 
@@ -3191,29 +3205,34 @@ public partial class Character : Unit, ICharacter
                 continue;
             }
 
-            if (equipItem.Durability >= equipItem.MaxDurability)
+            if (!CharacterRepairRules.NeedsRepair(equipItem))
             {
                 Logger.Warn($"Attempting to repair an item that has max durability, Item: {item.Id}");
                 continue;
             }
 
+            if (!CharacterRepairRules.CanRepairWithoutBlacksmith(
+                    FeaturesManager.Fsets.Check(Feature.itemRepairInBag),
+                    AccountPatron.IsPaid(this)))
+            {
 #pragma warning disable CA1508 // Avoid dead conditional code
-            if (CurrentInteractionObject is null || CurrentInteractionObject is not Npc npc)
-                continue;
+                if (CurrentInteractionObject is null || CurrentInteractionObject is not Npc npc)
+                    continue;
 #pragma warning restore CA1508 // Avoid dead conditional code
 
-            if (!npc.Template.Blacksmith)
-            {
-                Logger.Warn($"Attempting to repair an item while not at a blacksmith, Item: {item.Id}, NPC: {npc}");
-                continue;
-            }
+                if (!npc.Template.Blacksmith)
+                {
+                    Logger.Warn($"Attempting to repair an item while not at a blacksmith, Item: {item.Id}, NPC: {npc}");
+                    continue;
+                }
 
-            var dist = MathUtil.CalculateDistance(Transform.World.Position, npc.Transform.World.Position);
+                var dist = MathUtil.CalculateDistance(Transform.World.Position, npc.Transform.World.Position);
 
-            if (dist > 5f)
-            {
-                SendErrorMessage(ErrorMessageType.TooFarAway);
-                continue;
+                if (dist > 5f)
+                {
+                    SendErrorMessage(ErrorMessageType.TooFarAway);
+                    continue;
+                }
             }
 
             var currentRepairCost = equipItem.RepairCost;
@@ -3245,14 +3264,13 @@ public partial class Character : Unit, ICharacter
                 return;
         }
 
-        foreach (var (equipItem, item) in repairs)
+        foreach (var (equipItem, _) in repairs)
         {
-            equipItem.Durability = equipItem.MaxDurability;
-            equipItem.IsDirty = true;
-            tasks.Add(new ItemUpdate(item));
+            CharacterRepairRules.TryRestore(equipItem);
+            // UpdateDetail item tasks are not a detail write on this client — they leave the
+            // piece as an invalid / broken icon. Same publish as temper and lure.
+            SendPacket(new SCItemDetailUpdatedPacket(equipItem));
         }
-
-        Connection.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.Repair, tasks, []));
     }
 
     /// <summary>
@@ -3443,7 +3461,7 @@ public partial class Character : Unit, ICharacter
                     character.AutoUseAAPoint = reader.GetBoolean("auto_use_aapoint");
                     character.PrivacyStatus = (CharacterPrivacyStatus)reader.GetSByte("privacy_status");
                     character.PrevPoint = reader.GetInt32("prev_point");
-                    character.Point = reader.GetInt32("point");
+                    character.Point = AccountPatron.ResolvePoint(reader.GetInt32("point"));
                     character.Gift = reader.GetInt32("gift");
                     character.NumInventorySlots = reader.GetByte("num_inv_slot");
                     character.NumBankSlots = reader.GetInt16("num_bank_slot");
@@ -3577,7 +3595,7 @@ public partial class Character : Unit, ICharacter
                     character.AutoUseAAPoint = reader.GetBoolean("auto_use_aapoint");
                     character.PrivacyStatus = (CharacterPrivacyStatus)reader.GetSByte("privacy_status");
                     character.PrevPoint = reader.GetInt32("prev_point");
-                    character.Point = reader.GetInt32("point");
+                    character.Point = AccountPatron.ResolvePoint(reader.GetInt32("point"));
                     character.Gift = reader.GetInt32("gift");
                     character.NumInventorySlots = reader.GetByte("num_inv_slot");
                     character.NumBankSlots = reader.GetInt16("num_bank_slot");
@@ -3731,6 +3749,11 @@ public partial class Character : Unit, ICharacter
             AbilitySets = new CharacterAbilitySets(this);
             AbilitySets.Load(connection);
             AbilitySets.CheckDailyResetAtLogin();
+            BlessUthstin = new CharacterBlessUthstin(this);
+            BlessUthstin.Load(connection);
+            BlessUthstin.ApplyModifiers();
+            ArchePass = new CharacterArchePass(this);
+            ArchePass.Load(connection);
             Actability = new CharacterActability(this);
             Actability.Load(connection);
             Skills = new CharacterSkills(this);
@@ -3963,6 +3986,8 @@ public partial class Character : Unit, ICharacter
             // Inventory?.Save(connection, transaction);
             Abilities?.Save(connection, transaction);
             AbilitySets?.Save(connection, transaction);
+            BlessUthstin?.Save(connection, transaction);
+            ArchePass?.Save(connection, transaction);
             Actability?.Save(connection, transaction);
             Appellations?.Save(connection, transaction);
             // Save active buffs that should persist across logout (SaveRuleId > 0)

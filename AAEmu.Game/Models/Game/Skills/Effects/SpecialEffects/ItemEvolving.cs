@@ -6,6 +6,7 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Formulas;
+using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -160,6 +161,15 @@ public class ItemEvolving : SpecialEffectAction
         // than by the skill engine, so without this the tab never saw a reagent task at all.
         foreach (var (materialItem, _, _, _, _) in taken)
             materialItem._holdingContainer?.ConsumeItem(ItemTaskType.SkillReagents, materialItem.TemplateId, 1, materialItem);
+
+        if (taken.Count > 0)
+        {
+            owner.Events?.OnQuestProgressStat(owner, new OnQuestProgressStatArgs
+            {
+                Kind = QuestProgressStatKind.EvolvingMaterial,
+                Amount = taken.Count
+            });
+        }
 
         var beforeGrade = equipItem.Grade;
         equipItem.EvolvingExp += purchased;

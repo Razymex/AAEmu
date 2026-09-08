@@ -337,6 +337,11 @@ public class QuestActTemplate(QuestComponentTemplate parentComponent)
         //
     }
 
+    public virtual void OnQuestProgressStat(QuestAct questAct, object sender, OnQuestProgressStatArgs args)
+    {
+        //
+    }
+
     /// <summary>
     /// OnExpressFire 
     /// </summary>

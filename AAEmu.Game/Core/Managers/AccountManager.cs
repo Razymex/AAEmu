@@ -44,13 +44,6 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
     /// </remarks>
     public (int Point, uint Grade) GetAccountPremium(GameConnection connection)
     {
-        if (AppConfiguration.Instance.Account?.ForceMaxPremiumGrade == true)
-        {
-            var forced = PremiumGameData.Instance.MaxGradeId;
-            if (forced > 0)
-                return (PremiumGameData.Instance.GetGrade(forced)?.Point ?? 0, forced);
-        }
-
         var point = 0;
         if (connection?.Characters is { Count: > 0 })
         {
@@ -62,7 +55,8 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
             point = GetMaxCharacterPoint(connection.AccountId);
         }
 
-        return (point, PremiumGameData.Instance.GetGradeForPoint(point));
+        point = AccountPatron.ResolvePoint(point);
+        return (point, AccountPatron.ResolveGrade(PremiumGameData.Instance.GetGradeForPoint(point)));
     }
 
     /// <summary>

@@ -16,8 +16,8 @@ namespace AAEmu.Game.Core.Managers;
 public static class AccountMemberships
 {
     /// <summary>
-    /// Membership ids active for an account: the account_buff attributes it holds, plus the ones
-    /// Account.ForceMaxPremiumGrade hands to everybody.
+    /// Membership ids active for an account: stored account_buff rows, plus the stacked
+    /// Patron pair when <see cref="AccountPatron.GrantStacked"/> is on.
     /// </summary>
     public static List<uint> ActiveIds(uint accountId, uint worldId)
     {
@@ -27,21 +27,11 @@ public static class AccountMemberships
             .Select(a => a.KindValue)
             .ToList();
 
-        if (AppConfiguration.Instance.Account?.ForceMaxPremiumGrade != true)
-            return ids;
-
-        foreach (var forced in ForcedIds)
-        {
-            if (!ids.Contains(forced))
-                ids.Add(forced);
-        }
-
-        return ids;
+        return AccountPatronRules.WithStacked(ids, AccountPatron.GrantStacked).ToList();
     }
 
-    /// <summary>The memberships a forced max grade grants. Both, so nothing is held back.</summary>
-    public static IReadOnlyList<uint> ForcedIds { get; } =
-        [(uint)AccountMembership.Ancient, (uint)AccountMembership.Advanced];
+    /// <summary>Stacked Patron column (1001 + 1002).</summary>
+    public static IReadOnlyList<uint> ForcedIds => AccountPatronRules.StackedMemberships;
 
     /// <summary>
     /// The grade's labor numbers with the account's memberships applied - the same sum the client

@@ -20,6 +20,9 @@ public enum SkillObjectType
     /// <summary>10.0.2.13 <c>ActiveAbilitySet</c> — payload is skillsaver slot index (i32).</summary>
     AbilitySet = 15,
 
+    /// <summary>Bless Uthstin activate. Payload is the 0-based page as one byte.</summary>
+    BlessUthstinPage = 25,
+
     /// <summary>The awakening result the player picked. See <see cref="SkillObjectItemChangeMapping"/>.</summary>
     ItemChangeMapping = 26
 }
@@ -53,6 +56,7 @@ public class SkillObject : PacketMarshaler
         flagType is >= (int)SkillObjectType.Unk1 and <= (int)SkillObjectType.ItemEvolvingMaterials
             and not (int)SkillObjectType.Unk6
             or (int)SkillObjectType.AbilitySet
+            or (int)SkillObjectType.BlessUthstinPage
             or (int)SkillObjectType.ItemChangeMapping;
 
     public static SkillObject GetByType(SkillObjectType flag)
@@ -86,6 +90,9 @@ public class SkillObject : PacketMarshaler
                 break;
             case SkillObjectType.AbilitySet:
                 obj = new SkillObjectAbilitySet();
+                break;
+            case SkillObjectType.BlessUthstinPage:
+                obj = new SkillObjectBlessUthstinPage();
                 break;
             case SkillObjectType.ItemChangeMapping:
                 obj = new SkillObjectItemChangeMapping();

@@ -22,6 +22,22 @@ public class AccountBuffsGameData : Singleton<AccountBuffsGameData>, IGameDataLo
 
     public AccountBuff Get(uint id) => _buffs.GetValueOrDefault(id);
 
+    public bool UsesAuctionConfig(uint membershipId) => Get(membershipId)?.UseAuctionConfig == true;
+
+    public IEnumerable<uint> BuffIdsFor(IEnumerable<uint> membershipIds)
+    {
+        if (membershipIds == null)
+            return [];
+
+        return membershipIds
+            .Select(id => Get(id)?.BuffId ?? 0)
+            .Where(id => id > 0)
+            .Distinct();
+    }
+
+    public IEnumerable<uint> AllCharacterBuffIds =>
+        _buffs.Values.Select(b => b.BuffId).Where(id => id > 0).Distinct();
+
     /// <summary>
     /// Adds the memberships to a grade's labor numbers exactly the way the client does: the caps always
     /// accumulate, while a rate either accumulates or replaces the grade's own, per the row's
@@ -86,6 +102,7 @@ public class AccountBuffsGameData : Singleton<AccountBuffsGameData>, IGameDataLo
                 Id = reader.GetUInt32("id"),
                 Name = reader.GetString("name", string.Empty),
                 BuffId = reader.GetUInt32("buff_id", 0),
+                UseAuctionConfig = reader.GetBoolean("use_auction_config"),
                 OnlineLaborPower = reader.GetInt32("online_laborpower", 0),
                 ReplacePremiumOnlineLp = reader.GetBoolean("replace_premium_online_lp", true),
                 OfflineLaborPower = reader.GetInt32("offline_laborpower", 0),

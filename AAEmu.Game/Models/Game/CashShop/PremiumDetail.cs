@@ -14,6 +14,17 @@ public class PremiumDetail : PacketMarshaler
     public int Price { get; set; }
     public uint Id { get; set; }
     public int BCount { get; set; }
+    public string Url { get; set; } = string.Empty;
+    public int DiscountPrice { get; set; }
+    public int BuyLimit { get; set; }
+
+    /// <summary>Placeholder row for a closed catalog. Size on the list packet is 0.</summary>
+    public static PremiumDetail Unlisted { get; } = new()
+    {
+        CName = string.Empty,
+        IsHidden = 1,
+        Url = string.Empty
+    };
 
     public override PacketStream Write(PacketStream stream)
     {
@@ -27,6 +38,9 @@ public class PremiumDetail : PacketMarshaler
         stream.Write(Price);
         stream.Write(Id);
         stream.Write(BCount);
+        stream.Write(Url ?? string.Empty);
+        stream.Write(DiscountPrice);
+        stream.Write(BuyLimit);
         return stream;
     }
 }

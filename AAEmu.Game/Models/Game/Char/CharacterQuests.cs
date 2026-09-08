@@ -413,6 +413,14 @@ public class CharacterQuests(Character owner)
         }
         // Set quest flag to (not) completed
         completedBlock.Body.Set(completedQuestBlockIndex, isCompleted);
+        if (isCompleted)
+        {
+            Owner.Events?.OnQuestComplete(Owner, new OnQuestCompleteArgs
+            {
+                QuestId = questId
+            });
+        }
+
         return completedBlock;
     }
 

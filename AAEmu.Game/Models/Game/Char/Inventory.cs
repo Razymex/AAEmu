@@ -954,9 +954,17 @@ public class Inventory
         //if ((item?.Template.LootQuestId > 0) && (count != 0))
         if (count > 0 && item != null)
         {
-            //Owner?.Quests?.OnItemGather(item, count);
-            // инициируем событие
-            //Task.Run(() => QuestManager.Instance.DoAcquiredEvents((Character)Owner, item.TemplateId, item.Count));
+            var container = item._holdingContainer;
+            if (container != null &&
+                ItemWalletRules.CreditOnAcquire(item.TemplateId, container.ContainerType) &&
+                Owner is Character character)
+            {
+                var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, item.TemplateId, count, item);
+                if (consumed > 0)
+                    ItemWallet.CreditLoyalty(character, consumed);
+                return;
+            }
+
             QuestManager.Instance.DoItemsAcquiredEvents(Owner, item.TemplateId, item.Count);
         }
     }

@@ -176,6 +176,11 @@ public class Item : PacketMarshaler, IComparable<Item>
 
     public static uint DawnStone => 327;
     public static uint Coins => 500;
+    /// <summary>
+    /// Client <c>BM_MILEAGE_ITEM_TYPE</c>. Same class as gold and cash: no use skill.
+    /// Usable packs are other ids (29911 and friends) and already fire <c>GiveBmMileage</c>.
+    /// </summary>
+    public static uint BmMileage => 28586;
     /// <summary>농민의 주머니 — lowest NPC coin-purse tier (opens loot pack 10867).</summary>
     public static uint FarmerCoinPurse => 29203;
     public static uint TaxCertificate => 31891;

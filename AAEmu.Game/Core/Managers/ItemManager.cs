@@ -254,6 +254,11 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         return _config.WearableDurabilityConst;
     }
 
+    public int GetDeathDurabilityLossRatio()
+    {
+        return _config.DeathDurabilityLossRatio;
+    }
+
     public float GetItemStatConst()
     {
         return _config.ItemStatConst;

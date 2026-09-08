@@ -653,6 +653,17 @@ public class UnitReqs
                     world != null && SubZoneManager.Instance
                         .GetHousingZoneByPosition(world, position.X, position.Y).Count == 0);
 
+            case UnitReqsKindType.PremiumArchePass:
+                return Ret(SkillResultKeys.skill_urk_premium_arche_pass,
+                    player?.ArchePass?.HasPremium(Value1) == true);
+
+            case UnitReqsKindType.EnableArchePass:
+                return Ret(
+                    Value1 == 0
+                        ? SkillResultKeys.skill_urk_enable_arche_pass
+                        : SkillResultKeys.skill_urk_enable_arche_pass_with_type,
+                    player?.ArchePass?.HasProgress(Value1) == true);
+
             case UnitReqsKindType.Ulc:
                 if (player == null || !UlcGameData.Instance.Exists(Value1))
                     return Ret(SkillResultKeys.skill_failure, false);

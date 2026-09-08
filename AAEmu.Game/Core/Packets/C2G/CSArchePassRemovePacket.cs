@@ -3,13 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Drop an owned or in-progress pass. Body is the <c>arche_passes.id</c>.</summary>
 public class CSArchePassRemovePacket() : GamePacket(CSOffsets.CSArchePassRemovePacket, 1)
 {
     public int TypeValue { get; private set; }
@@ -17,5 +11,6 @@ public class CSArchePassRemovePacket() : GamePacket(CSOffsets.CSArchePassRemoveP
     public override void Read(PacketStream stream)
     {
         TypeValue = stream.ReadInt32();
+        Connection.ActiveChar?.ArchePass?.TryRemove((uint)TypeValue);
     }
 }

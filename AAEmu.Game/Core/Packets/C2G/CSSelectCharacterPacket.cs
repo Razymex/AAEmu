@@ -84,6 +84,8 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             Connection.SendPacket(new SCCharacterStatePacket(character));
             character.AbilitySets?.SendSlotCount();
             character.AbilitySets?.SendAllInfo();
+            character.BlessUthstin?.SendLoginApply();
+            character.ArchePass?.SendLogin();
 
             // SCWorldLevelInfo is NOT sent here. The client's world-level manager binds the packet's data to the
             // local player unit, which does not exist until Spawn() runs on NotifyInGame; sending it in the select
