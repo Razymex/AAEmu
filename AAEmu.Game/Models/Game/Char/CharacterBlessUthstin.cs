@@ -224,6 +224,8 @@ public sealed class CharacterBlessUthstin
             snapshot = Capture();
         }
 
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         if (!BypassChargesForTests)
         {
             var consumeItem = Owner.Inventory.GetItemById(pending.ItemId);
@@ -248,7 +250,10 @@ public sealed class CharacterBlessUthstin
             _pending = null;
         }
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             Restore(snapshot);
             if (!TryRefundTemplate(pending.ItemType, pending.NeedCount, ItemTaskType.BlessUthstinChangeStats))
@@ -285,6 +290,8 @@ public sealed class CharacterBlessUthstin
             snapshot = Capture();
         }
 
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         if (!BypassChargesForTests &&
             !TryConsumeTemplate(
                 BlessUthstinRules.InitItemId,
@@ -299,7 +306,10 @@ public sealed class CharacterBlessUthstin
                 _pending = null;
         }
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             Restore(snapshot);
             if (!TryRefundTemplate(
@@ -327,6 +337,8 @@ public sealed class CharacterBlessUthstin
 
         BlessSnapshot snapshot;
         int need;
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         lock (_sync)
         {
             if (!BlessUthstinRules.CanExtend(ExtendMaxStats))
@@ -346,7 +358,10 @@ public sealed class CharacterBlessUthstin
             ApplyExtendCount++;
         }
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             Restore(snapshot);
             if (!TryRefundTemplate(BlessUthstinRules.ExtendItemId, need, ItemTaskType.BlessUthstinExpandMaxStats))
@@ -386,6 +401,8 @@ public sealed class CharacterBlessUthstin
             snapshot = Capture();
         }
 
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         if (!BypassChargesForTests &&
             !TryConsumeTemplate(BlessUthstinRules.ExpandItemId, need, ItemTaskType.BlessUthstinExpandPage))
             return false;
@@ -396,7 +413,10 @@ public sealed class CharacterBlessUthstin
             newIndex = Pages.Count - 1;
         }
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             Restore(snapshot);
             if (!TryRefundTemplate(BlessUthstinRules.ExpandItemId, need, ItemTaskType.BlessUthstinExpandPage))
@@ -432,6 +452,8 @@ public sealed class CharacterBlessUthstin
             snapshot = Capture();
         }
 
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         if (!TryCharge(cost, ItemTaskType.BlessUthstinCopyPage))
             return false;
 
@@ -442,7 +464,10 @@ public sealed class CharacterBlessUthstin
                 _pending = null;
         }
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             Restore(snapshot);
             if (!TryRefundMoney(cost, ItemTaskType.BlessUthstinCopyPage))
@@ -478,13 +503,18 @@ public sealed class CharacterBlessUthstin
             snapshot = Capture();
         }
 
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         if (!TryCharge(cost, ItemTaskType.BlessUthstinSelectPage))
             return false;
 
         lock (_sync)
             SelectPageIndex = pageIndex;
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             Restore(snapshot);
             if (!TryRefundMoney(cost, ItemTaskType.BlessUthstinSelectPage))
@@ -689,6 +719,13 @@ public sealed class CharacterBlessUthstin
         for (var i = 0; i < BlessUthstinRules.StatCount; i++)
             live[i] -= page.GetStat(i);
         return live;
+    }
+
+    private bool ConsumePersistFail()
+    {
+        var fail = FailNextPersist;
+        FailNextPersist = false;
+        return fail;
     }
 
     private bool TryCharge(long cost, ItemTaskType task)

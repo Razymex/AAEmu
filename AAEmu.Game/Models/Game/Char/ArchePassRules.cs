@@ -14,17 +14,17 @@ public static class ArchePassRules
     public const string ConfigResetWeeklyDay = "arche_pass_reset_weekly_day";
 
     public static int MissionCompleteMax =>
-        ContentConfigGameData.Instance.GetInt(ConfigMissionCompleteCount, 20);
+        ContentConfigGameData.Instance.RequireInt(ConfigMissionCompleteCount);
 
     public static int MissionChangeMax =>
-        ContentConfigGameData.Instance.GetInt(ConfigMissionChangeCount, 6);
+        ContentConfigGameData.Instance.RequireInt(ConfigMissionChangeCount);
 
     /// <summary>
     /// Compact weekday for the weekly mission reset. <c>1</c> is Monday, matching
     /// <see cref="DayOfWeek.Monday"/>.
     /// </summary>
     public static int ResetWeekday =>
-        ContentConfigGameData.Instance.GetInt(ConfigResetWeeklyDay, 1);
+        ContentConfigGameData.Instance.RequireInt(ConfigResetWeeklyDay);
 
     public static bool CanBuy(ArchePassStatus status) =>
         status is ArchePassStatus.Invalid or ArchePassStatus.Dropped;

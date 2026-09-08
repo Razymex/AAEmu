@@ -65,4 +65,18 @@ public static class ScheduleItemRules
             return 0;
         return Math.Min(cap, Math.Max(0, cumulated + addSeconds));
     }
+
+    /// <summary>Unset until the character is in-world this session.</summary>
+    public static bool HasSessionTick(DateTime lastOnlineTick) => lastOnlineTick != default;
+
+    /// <summary>
+    /// Playtime between two in-world samples. A cleared session tick (logout) adds nothing,
+    /// so a same-day reconnect cannot count the offline gap.
+    /// </summary>
+    public static int SessionAddSeconds(DateTime lastOnlineTick, DateTime now)
+    {
+        if (!HasSessionTick(lastOnlineTick))
+            return 0;
+        return (int)Math.Max(0, (ServerCalendar.AsUtc(now) - ServerCalendar.AsUtc(lastOnlineTick)).TotalSeconds);
+    }
 }

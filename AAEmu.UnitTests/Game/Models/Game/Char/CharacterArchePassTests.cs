@@ -1,6 +1,7 @@
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.UnitTests.Game.GameData;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
@@ -211,6 +212,7 @@ public class CharacterArchePassTests
 
     private static CharacterArchePass Create()
     {
+        ContentConfigTestSeed.BlessAndArchePass();
         SeedPass(TestPassId);
         SeedTiers(TestPassId);
 

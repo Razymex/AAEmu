@@ -4013,6 +4013,8 @@ public partial class Character : Unit, ICharacter
             AbilitySets?.Save(connection, transaction);
             BlessUthstin?.Save(connection, transaction);
             ArchePass?.Save(connection, transaction);
+            AccountAttendanceManager.Instance.SaveForAccount(AccountId, connection, transaction);
+            ScheduleItemManager.Instance.SaveForAccount(AccountId, connection, transaction);
             Actability?.Save(connection, transaction);
             Appellations?.Save(connection, transaction);
             // Save active buffs that should persist across logout (SaveRuleId > 0)

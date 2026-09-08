@@ -1,10 +1,14 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.UnitTests.Game.GameData;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
 public class ArchePassRulesTests
 {
+    [Before(Test)]
+    public void SeedContent() => ContentConfigTestSeed.BlessAndArchePass();
+
     [Test]
     public async Task Buy_AllowsInvalidAndDroppedOnly()
     {

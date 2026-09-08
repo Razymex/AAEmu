@@ -28,5 +28,6 @@ public interface IMailManager : ILoadable
     (int, int) Save(MySqlConnection connection, MySqlTransaction transaction);
     void PersistNow();
     IDisposable DeferPersist();
+    WorldSaveStatus TakeLastFlushStatus();
     Dictionary<long, BaseMail> AllPlayerMails { get; }
 }

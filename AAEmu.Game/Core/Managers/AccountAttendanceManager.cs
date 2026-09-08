@@ -21,6 +21,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private readonly ConcurrentDictionary<(uint AccountId, int Year, int Month), Dictionary<int, Claim>> _months = [];
+    private readonly ConcurrentDictionary<(uint AccountId, int Year, int Month), byte> _dirtyMonths = [];
 
     private sealed class Claim
     {
@@ -95,45 +96,40 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
 
         var unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var claim = new Claim { AttendedAt = unix, IsArchelife = isArchelife };
-        if (!TryPersist(character.AccountId, day.Year, day.Month, day.Day, unix, isArchelife))
+        var cashPacks = new List<AccountAttendanceReward>();
+        bool byMail;
+        using (WorldSnapshotCommit.Begin(bypassCharges: false))
         {
-            character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
-            return;
-        }
-
-        claims[day.Day] = claim;
-        if (!TryGrant(character, grants, out var byMail, out var deliveredAny))
-        {
-            var rollbackOk = false;
-            if (!deliveredAny)
+            claims[day.Day] = claim;
+            _dirtyMonths[(character.AccountId, day.Year, day.Month)] = 1;
+            if (!TryGrant(character, grants, cashPacks, out byMail))
             {
                 claims.Remove(day.Day);
-                rollbackOk = TryRemoveClaim(character.AccountId, day.Year, day.Month, day.Day);
-                if (!rollbackOk)
-                    claims[day.Day] = claim;
+                character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
+                SendMonth(character);
+                return;
             }
 
-            if (DurableRewardRules.KeepClaim(false, deliveredAny, rollbackOk))
-            {
-                if (deliveredAny)
-                {
-                    Logger.Warn(
-                        "Account attendance leftover grants failed after a partial delivery for {0}",
-                        character.Name);
-                    character.SendPacket(new SCAccountAttendanceAddedPacket(true, unix, isArchelife));
-                    character.SendPacket(new SCAccountAttendanceRewardedPacket(0, byMail));
-                    SendMonth(character);
-                    return;
-                }
+            WorldSnapshotCommit.RequestFlush(bypassCharges: false);
+        }
 
-                Logger.Error(
-                    "Account attendance grant failed and the claim could not be removed for {0}",
-                    character.Name);
-            }
-
+        if (!WorldSnapshotCommit.AcceptedLast(bypassCharges: false, failNextPersist: false))
+        {
+            claims.Remove(day.Day);
             character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
             SendMonth(character);
             return;
+        }
+
+        foreach (var pack in cashPacks)
+        {
+            if (!ItemWallet.TryCreditCashPack(character, pack.ItemId, pack.ItemCount))
+            {
+                Logger.Error(
+                    "Account attendance claim saved but a cash pack did not credit for {0} item={1}",
+                    character.Name,
+                    pack.ItemId);
+            }
         }
 
         character.SendPacket(new SCAccountAttendanceAddedPacket(true, unix, isArchelife));
@@ -152,17 +148,17 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
     private static bool TryGrant(
         Character character,
         IReadOnlyList<AccountAttendanceReward> grants,
-        out bool byMail,
-        out bool deliveredAny)
+        List<AccountAttendanceReward> cashPacks,
+        out bool byMail)
     {
         byMail = false;
-        deliveredAny = false;
         var items = new List<AccountAttendanceReward>();
         foreach (var grant in grants)
         {
-            if (ItemWallet.TryCreditCashPack(character, grant.ItemId, grant.ItemCount))
+            var template = ItemManager.Instance.GetTemplate(grant.ItemId);
+            if (ItemWallet.CreditsOnTemplate(template) > 0)
             {
-                deliveredAny = true;
+                cashPacks.Add(grant);
                 continue;
             }
 
@@ -176,6 +172,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             character.Inventory.Bag.SpaceLeftForItem(x.ItemId) >= x.ItemCount);
         if (bagOk)
         {
+            var granted = new List<(uint ItemId, int Count)>();
             foreach (var grant in items)
             {
                 if (!character.Inventory.Bag.AcquireDefaultItemEx(
@@ -186,8 +183,13 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                         out _,
                         out _,
                         character.Id))
+                {
+                    foreach (var (itemId, count) in granted)
+                        character.Inventory.Bag.ConsumeItem(ItemTaskType.SkillEffectGainItem, itemId, count, null);
                     return false;
-                deliveredAny = true;
+                }
+
+                granted.Add((grant.ItemId, grant.ItemCount));
             }
             return true;
         }
@@ -222,8 +224,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                     out _,
                     character.Id))
             {
-                if (!MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, staged))
-                    deliveredAny = true;
+                MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, staged);
                 return false;
             }
 
@@ -233,12 +234,10 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         mail.Body.Attachments.AddRange(staged);
         if (!mail.Send())
         {
-            if (!MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, staged))
-                deliveredAny = true;
+            MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, staged);
             return false;
         }
 
-        deliveredAny = true;
         byMail = true;
         return true;
     }
@@ -291,63 +290,57 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         return true;
     }
 
-    private static bool TryPersist(uint accountId, int year, int month, int day, long attendedAt, bool isArchelife)
+    public void SaveForAccount(uint accountId, MySqlConnection connection, MySqlTransaction transaction)
     {
-        try
+        foreach (var key in _dirtyMonths.Keys)
         {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText =
-                """
-                INSERT INTO account_attendances
-                    (account_id, year, month, day, attended_at, is_archelife)
-                VALUES
-                    (@account, @year, @month, @day, @attendedAt, @archelife)
-                """;
-            command.Parameters.AddWithValue("@account", accountId);
-            command.Parameters.AddWithValue("@year", year);
-            command.Parameters.AddWithValue("@month", month);
-            command.Parameters.AddWithValue("@day", day);
-            command.Parameters.AddWithValue("@attendedAt", attendedAt);
-            command.Parameters.AddWithValue("@archelife", isArchelife ? 1 : 0);
-            command.Prepare();
-            return command.ExecuteNonQuery() > 0;
-        }
-        catch (MySqlException ex) when (ex.Number is 1146 or 1054)
-        {
-            Logger.Warn("Account attendance Persist skipped (table missing)");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex, "Account attendance Persist failed {0}-{1:00}-{2:00}", year, month, day);
-            return false;
-        }
-    }
+            if (key.AccountId != accountId)
+                continue;
+            if (!_months.TryGetValue((key.AccountId, key.Year, key.Month), out var claims))
+            {
+                _dirtyMonths.TryRemove(key, out _);
+                continue;
+            }
 
-    private static bool TryRemoveClaim(uint accountId, int year, int month, int day)
-    {
-        try
-        {
-            using var connection = MySQL.CreateConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText =
-                """
-                DELETE FROM account_attendances
-                WHERE account_id = @account AND year = @year AND month = @month AND day = @day
-                """;
-            command.Parameters.AddWithValue("@account", accountId);
-            command.Parameters.AddWithValue("@year", year);
-            command.Parameters.AddWithValue("@month", month);
-            command.Parameters.AddWithValue("@day", day);
-            command.Prepare();
-            command.ExecuteNonQuery();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Logger.Error(ex, "Account attendance RemoveClaim failed {0}-{1:00}-{2:00}", year, month, day);
-            return false;
+            using (var command = connection.CreateCommand())
+            {
+                command.Connection = connection;
+                command.Transaction = transaction;
+                command.CommandText =
+                    """
+                    DELETE FROM account_attendances
+                    WHERE account_id = @account AND year = @year AND month = @month
+                    """;
+                command.Parameters.AddWithValue("@account", accountId);
+                command.Parameters.AddWithValue("@year", key.Year);
+                command.Parameters.AddWithValue("@month", key.Month);
+                command.Prepare();
+                command.ExecuteNonQuery();
+            }
+
+            foreach (var (claimedDay, claim) in claims)
+            {
+                using var command = connection.CreateCommand();
+                command.Connection = connection;
+                command.Transaction = transaction;
+                command.CommandText =
+                    """
+                    INSERT INTO account_attendances
+                        (account_id, year, month, day, attended_at, is_archelife)
+                    VALUES
+                        (@account, @year, @month, @day, @attendedAt, @archelife)
+                    """;
+                command.Parameters.AddWithValue("@account", accountId);
+                command.Parameters.AddWithValue("@year", key.Year);
+                command.Parameters.AddWithValue("@month", key.Month);
+                command.Parameters.AddWithValue("@day", claimedDay);
+                command.Parameters.AddWithValue("@attendedAt", claim.AttendedAt);
+                command.Parameters.AddWithValue("@archelife", claim.IsArchelife ? 1 : 0);
+                command.Prepare();
+                command.ExecuteNonQuery();
+            }
+
+            _dirtyMonths.TryRemove(key, out _);
         }
     }
 }

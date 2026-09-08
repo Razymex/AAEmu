@@ -537,6 +537,7 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
     [ThreadStatic] private static int t_persistDeferDepth;
     [ThreadStatic] private static bool t_persistRequested;
+    [ThreadStatic] private static WorldSaveStatus t_lastFlushStatus;
 
     /// <summary>
     /// Marks a money operation. Holds every <see cref="PersistNow"/> request made on this
@@ -565,6 +566,14 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     /// </summary>
     public void PersistNow() => _ = EnsurePersisted();
 
+    /// <summary>Status of the last flush on this thread, then resets to <see cref="WorldSaveStatus.Saved"/>.</summary>
+    public WorldSaveStatus TakeLastFlushStatus()
+    {
+        var status = t_lastFlushStatus;
+        t_lastFlushStatus = WorldSaveStatus.Saved;
+        return status;
+    }
+
     private WorldSaveStatus EnsurePersisted()
     {
         if (t_persistDeferDepth > 0)
@@ -580,11 +589,15 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     {
         var saver = SingletonContainer.ServiceProvider?.GetService<ISaveManager>();
         if (saver == null)
+        {
+            t_lastFlushStatus = WorldSaveStatus.Saved;
             return WorldSaveStatus.Saved;
+        }
 
         // A save that is already running took the gate after this operation released it, so
         // it carries everything the operation wrote. Nothing is lost by not saving twice.
         var status = saver.TrySave();
+        t_lastFlushStatus = status;
         if (status == WorldSaveStatus.Busy)
             Logger.Debug("Mail persist folded into the save already in progress");
         return status;
@@ -608,7 +621,10 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             // Release the gate before saving: the save needs it exclusively.
             PersistenceGate.ExitOperation();
             if (!t_persistRequested)
+            {
+                t_lastFlushStatus = WorldSaveStatus.Saved;
                 return;
+            }
 
             t_persistRequested = false;
             owner.FlushPersist();

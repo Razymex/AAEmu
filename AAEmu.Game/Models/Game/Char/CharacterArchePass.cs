@@ -110,6 +110,8 @@ public sealed class CharacterArchePass
 
         ArchePassProgress row;
         Dictionary<uint, ArchePassProgress> snapshot;
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         lock (_sync)
         {
             var current = _passes.TryGetValue(passId, out var existing)
@@ -145,7 +147,10 @@ public sealed class CharacterArchePass
             _passes[passId] = row;
         }
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             RestorePasses(snapshot);
             if (!BypassChargesForTests &&
@@ -258,6 +263,8 @@ public sealed class CharacterArchePass
         ArchePassProgress row;
         ArchePassDesc desc;
         Dictionary<uint, ArchePassProgress> snapshot;
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         lock (_sync)
         {
             row = LiveProgress();
@@ -281,7 +288,10 @@ public sealed class CharacterArchePass
             row.Premium = true;
         }
 
-        if (!TryPersist())
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
+
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
         {
             RestorePasses(snapshot);
             if (!BypassChargesForTests &&
@@ -346,6 +356,10 @@ public sealed class CharacterArchePass
         ArchePassTierDesc reward;
         uint maxTier;
         Dictionary<uint, ArchePassProgress> snapshot;
+        uint itemId = 0;
+        int count = 0;
+        using (WorldSnapshotCommit.Begin(BypassChargesForTests))
+        {
         lock (_sync)
         {
             row = LiveProgress();
@@ -388,24 +402,22 @@ public sealed class CharacterArchePass
                 row.Status = ArchePassStatus.Completed;
         }
 
-        if (!TryPersist())
+        itemId = premium ? reward.PremiumRewardItemId : reward.RewardItemId;
+        count = premium ? reward.PremiumRewardItemCount : reward.RewardItemCount;
+        if ((!BypassChargesForTests || FailNextGrant) &&
+            !TryGrant(itemId, count, ItemTaskType.ArchePassReward))
         {
             RestorePasses(snapshot);
             return false;
         }
 
-        var itemId = premium ? reward.PremiumRewardItemId : reward.RewardItemId;
-        var count = premium ? reward.PremiumRewardItemCount : reward.RewardItemCount;
-        if ((!BypassChargesForTests || FailNextGrant) &&
-            !TryGrant(itemId, count, ItemTaskType.ArchePassReward))
-        {
-            if (!RevertPersistedPasses(snapshot))
-            {
-                Logger.Error(
-                    "ArchePass claim grant failed and the compensating persist did not land for {0}",
-                    Owner.Name);
-            }
+        WorldSnapshotCommit.RequestFlush(BypassChargesForTests);
+        }
 
+        if (!WorldSnapshotCommit.AcceptedLast(BypassChargesForTests, ConsumePersistFail()))
+        {
+            RestorePasses(snapshot);
+            TryUngrant(itemId, count, ItemTaskType.ArchePassReward);
             return false;
         }
         if (row.Status == ArchePassStatus.Completed)
@@ -673,6 +685,20 @@ public sealed class CharacterArchePass
         return Owner.Inventory.Bag.ConsumeItem(task, templateId, count, null) == count;
     }
 
+    private bool ConsumePersistFail()
+    {
+        var fail = FailNextPersist;
+        FailNextPersist = false;
+        return fail;
+    }
+
+    private void TryUngrant(uint templateId, int count, ItemTaskType task)
+    {
+        if (BypassChargesForTests || count <= 0 || templateId == 0)
+            return;
+        Owner.Inventory.Bag.ConsumeItem(task, templateId, count, null);
+    }
+
     private bool TryGrant(uint templateId, int count, ItemTaskType task)
     {
         if (FailNextGrant)
@@ -707,18 +733,6 @@ public sealed class CharacterArchePass
 
     private Dictionary<uint, ArchePassProgress> ClonePasses() =>
         _passes.ToDictionary(pair => pair.Key, pair => pair.Value.Clone());
-
-    private bool RevertPersistedPasses(Dictionary<uint, ArchePassProgress> snapshot)
-    {
-        var committed = ClonePasses();
-        RestorePasses(snapshot);
-        var rollbackOk = TryPersist();
-        if (!DurableRewardRules.KeepClaim(false, false, rollbackOk))
-            return true;
-
-        RestorePasses(committed);
-        return false;
-    }
 
     private void RestorePasses(Dictionary<uint, ArchePassProgress> snapshot)
     {

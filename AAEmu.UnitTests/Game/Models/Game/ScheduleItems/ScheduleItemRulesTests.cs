@@ -75,4 +75,20 @@ public class ScheduleItemRulesTests
         await Assert.That(ScheduleItemRules.TickCumulated(term - 10, 10, 60)).IsEqualTo(term);
         await Assert.That(ScheduleItemRules.TickCumulated(10, 0, 60)).IsEqualTo(0);
     }
+
+    [Test]
+    public async Task SessionAddSeconds_IgnoresLogoutGaps()
+    {
+        var start = new DateTime(2026, 9, 8, 10, 0, 0, DateTimeKind.Utc);
+        var later = start.AddMinutes(31);
+
+        await Assert.That(ScheduleItemRules.HasSessionTick(default)).IsFalse();
+        await Assert.That(ScheduleItemRules.SessionAddSeconds(default, later)).IsEqualTo(0);
+        await Assert.That(ScheduleItemRules.TickCumulated(0, 30, 0)).IsEqualTo(0);
+
+        await Assert.That(ScheduleItemRules.HasSessionTick(start)).IsTrue();
+        await Assert.That(ScheduleItemRules.SessionAddSeconds(start, later)).IsEqualTo(31 * 60);
+        await Assert.That(ScheduleItemRules.TickCumulated(0, 30, 31 * 60))
+            .IsEqualTo(ScheduleItemRules.SecondsForTerm(30));
+    }
 }

@@ -5,18 +5,20 @@ namespace AAEmu.UnitTests.Game.Models.Game.CashShop;
 public class PremiumServiceRulesTests
 {
     [Test]
-    public async Task Passes_AreTheCompactDurationTickets()
+    public async Task FromBuyPremiumEffects_KeepsPositiveDurationRows()
     {
-        await Assert.That(PremiumServiceRules.Passes).IsEquivalentTo(new PremiumServiceRules.Pass[]
+        var passes = PremiumServiceRules.FromBuyPremiumEffects(
+        [
+            new(49190, 180, 30),
+            new(49183, 180, 1),
+            new(9, 179, 5),
+            new(8, 180, 0)
+        ]);
+
+        await Assert.That(passes).IsEquivalentTo(new PremiumServiceRules.Pass[]
         {
             new(49183, 1),
-            new(49187, 3),
-            new(49188, 7),
-            new(49189, 15),
-            new(49190, 30),
-            new(49191, 90),
-            new(49192, 180),
-            new(49193, 365)
+            new(49190, 30)
         });
     }
 
@@ -52,6 +54,11 @@ public class PremiumServiceRulesTests
     [Test]
     public async Task BuildListed_SkipsMissingNamesAndKeepsProductIdsDense()
     {
+        PremiumServiceRules.ReplacePasses(
+        [
+            new(49183, 1),
+            new(49190, 30)
+        ]);
         var rows = PremiumServiceRules.BuildListed(id => id == 49190 ? "thirty" : id == 49183 ? "one" : null);
 
         await Assert.That(rows).HasCount().EqualTo(2);

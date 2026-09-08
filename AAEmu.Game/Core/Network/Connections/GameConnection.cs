@@ -88,6 +88,7 @@ public class GameConnection
     public void OnDisconnect()
     {
         AccountManager.Instance.Remove(AccountId);
+        ScheduleItemManager.Instance.NoteDisconnected(AccountId);
 
         if (ActiveChar != null)
         {

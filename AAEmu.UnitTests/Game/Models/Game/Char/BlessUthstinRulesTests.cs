@@ -1,10 +1,14 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.UnitTests.Game.GameData;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
 public class BlessUthstinRulesTests
 {
+    [Before(Test)]
+    public void SeedContent() => ContentConfigTestSeed.BlessAndArchePass();
+
     [Test]
     public async Task EmptyList_StillWritesOneDefaultPage()
     {
@@ -74,10 +78,13 @@ public class BlessUthstinRulesTests
     }
 
     [Test]
-    public async Task CanExtend_StopsAtTheConfiguredCap()
+    public async Task CanExtend_StopsWhenAnotherStepWouldNotRaiseMaxStats()
     {
-        await Assert.That(BlessUthstinRules.CanExtend(BlessUthstinRules.MaxStatsLimit - BlessUthstinRules.ExtendPerPoint)).IsTrue();
-        await Assert.That(BlessUthstinRules.CanExtend(BlessUthstinRules.MaxStatsLimit - BlessUthstinRules.ExtendPerPoint + 1)).IsFalse();
+        await Assert.That(BlessUthstinRules.BaseStats).IsEqualTo(200);
+        await Assert.That(BlessUthstinRules.MaxStatsLimit).IsEqualTo(300);
+        await Assert.That(BlessUthstinRules.ExtendPerPoint).IsEqualTo(20);
+        await Assert.That(BlessUthstinRules.CanExtend(80)).IsTrue();
+        await Assert.That(BlessUthstinRules.CanExtend(100)).IsFalse();
     }
 
     [Test]

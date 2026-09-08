@@ -43,16 +43,16 @@ public static class BlessUthstinRules
 
     public const string FormulaApplyCountKey = "bless_uthstin_apply_count";
 
-    public static int BaseStats => ContentConfigGameData.Instance.GetInt(ConfigBaseStats, 200);
-    public static int MaxStatsLimit => ContentConfigGameData.Instance.GetInt(ConfigMaxStatsLimit, 300);
-    public static int ExtendPerPoint => ContentConfigGameData.Instance.GetInt(ConfigExtendPerPoint, 20);
-    public static int ApplyLimit => ContentConfigGameData.Instance.GetInt(ConfigApplyLimit, 1);
-    public static uint InitItemId => ContentConfigGameData.Instance.GetUInt(ConfigInitItem, 47084);
-    public static uint ExtendItemId => ContentConfigGameData.Instance.GetUInt(ConfigExtendItem, 47084);
-    public static int InitItemCount => ContentConfigGameData.Instance.GetInt(ConfigInitItemCount, 1);
-    public static int SelectCostBase => ContentConfigGameData.Instance.GetInt(ConfigSelectCost, 600);
-    public static int CopyCostBase => ContentConfigGameData.Instance.GetInt(ConfigCopyCost, 500);
-    public static uint ExpandItemId => ContentConfigGameData.Instance.GetUInt(ConfigExpandItem, 39559);
+    public static int BaseStats => ContentConfigGameData.Instance.RequireInt(ConfigBaseStats);
+    public static int MaxStatsLimit => ContentConfigGameData.Instance.RequireInt(ConfigMaxStatsLimit);
+    public static int ExtendPerPoint => ContentConfigGameData.Instance.RequireInt(ConfigExtendPerPoint);
+    public static int ApplyLimit => ContentConfigGameData.Instance.RequireInt(ConfigApplyLimit);
+    public static uint InitItemId => ContentConfigGameData.Instance.RequireUInt(ConfigInitItem);
+    public static uint ExtendItemId => ContentConfigGameData.Instance.RequireUInt(ConfigExtendItem);
+    public static int InitItemCount => ContentConfigGameData.Instance.RequireInt(ConfigInitItemCount);
+    public static int SelectCostBase => ContentConfigGameData.Instance.RequireInt(ConfigSelectCost);
+    public static int CopyCostBase => ContentConfigGameData.Instance.RequireInt(ConfigCopyCost);
+    public static uint ExpandItemId => ContentConfigGameData.Instance.RequireUInt(ConfigExpandItem);
 
     public static int ActivatedPageNumber(int selectPageIndex) =>
         selectPageIndex >= 0 ? selectPageIndex + 1 : DefaultPageCount;
@@ -61,7 +61,7 @@ public static class BlessUthstinRules
         Math.Min(MaxStatsLimit, Math.Max(0, extendMaxStats) + BaseStats);
 
     public static bool CanExtend(int extendMaxStats) =>
-        extendMaxStats + ExtendPerPoint <= MaxStatsLimit;
+        MaxStats(extendMaxStats + ExtendPerPoint) > MaxStats(extendMaxStats);
 
     public static int SelectCost(int level) =>
         Math.Max(0, level) * Math.Max(0, SelectCostBase);
@@ -91,8 +91,8 @@ public static class BlessUthstinRules
     {
         return currentPageCount switch
         {
-            1 => ContentConfigGameData.Instance.GetInt(ConfigExpandPage2, 1),
-            2 => ContentConfigGameData.Instance.GetInt(ConfigExpandPage3, 2),
+            1 => ContentConfigGameData.Instance.RequireInt(ConfigExpandPage2),
+            2 => ContentConfigGameData.Instance.RequireInt(ConfigExpandPage3),
             _ => 0
         };
     }

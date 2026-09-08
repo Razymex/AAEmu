@@ -1,6 +1,7 @@
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.UnitTests.Game.GameData;
 
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
@@ -116,6 +117,7 @@ public class CharacterBlessUthstinTests
 
     private static CharacterBlessUthstin Create()
     {
+        ContentConfigTestSeed.BlessAndArchePass();
         BlessUthstinGameData.Instance.SetForTest(new BlessUthstinItem
         {
             ItemId = TestItemId,

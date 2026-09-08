@@ -74,6 +74,26 @@ CREATE TABLE IF NOT EXISTS `character_arche_pass_missions` (
   PRIMARY KEY (`owner`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Arche Pass weekly mission counters';
 
+CREATE TABLE IF NOT EXISTS `account_attendances` (
+  `account_id` int unsigned NOT NULL,
+  `year` smallint NOT NULL,
+  `month` tinyint NOT NULL,
+  `day` tinyint NOT NULL,
+  `attended_at` bigint NOT NULL,
+  `is_archelife` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`account_id`, `year`, `month`, `day`),
+  KEY `idx_account_month` (`account_id`, `year`, `month`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Event Center attendance claims';
+
+CREATE TABLE IF NOT EXISTS `account_schedule_items` (
+  `account_id` int unsigned NOT NULL,
+  `schedule_id` int NOT NULL,
+  `gave` tinyint unsigned NOT NULL DEFAULT 0,
+  `cumulated` bigint NOT NULL DEFAULT 0,
+  `updated` bigint NOT NULL,
+  PRIMARY KEY (`account_id`, `schedule_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='HUD schedule-item timers';
+
 
 CREATE TABLE IF NOT EXISTS `accounts` (
   `account_id` INT(11) NOT NULL,
