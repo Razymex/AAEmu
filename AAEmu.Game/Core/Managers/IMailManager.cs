@@ -29,5 +29,6 @@ public interface IMailManager : ILoadable
     void PersistNow();
     IDisposable DeferPersist();
     WorldSaveStatus TakeLastFlushStatus();
+    WorldSaveStatus FlushRequestedNow();
     Dictionary<long, BaseMail> AllPlayerMails { get; }
 }

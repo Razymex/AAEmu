@@ -26,6 +26,17 @@ public static class WorldSnapshotCommit
     }
 
     /// <summary>
+    /// Writes the requested snapshot now and keeps the enclosing <see cref="Begin"/> hold
+    /// so failure cleanup can run before autosave. Nested scopes fold into the outer write.
+    /// </summary>
+    public static bool FlushNow(bool bypassCharges)
+    {
+        if (bypassCharges)
+            return true;
+        return Accepted(MailManager.Instance.FlushRequestedNow());
+    }
+
+    /// <summary>
     /// Call after disposing <see cref="Begin"/>. The snapshot runs on that dispose, so this
     /// reads the flush that just finished.
     /// </summary>

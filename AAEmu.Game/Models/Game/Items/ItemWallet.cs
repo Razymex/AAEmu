@@ -67,20 +67,26 @@ public static class ItemWallet
         if (character == null || container == null || count <= 0)
             return 0;
 
-        var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, templateId, count, item);
-        if (consumed <= 0)
-            return 0;
-
-        var loyalty = ItemWalletRules.LoyaltyFromCount(consumed);
-        if (PersistWithRemoval(character, () => AccountLiveWallet.QueueLoyalty(character.AccountId, loyalty),
-                () => AccountLiveWallet.UnqueueLoyalty(character.AccountId, loyalty)))
+        var consumed = 0;
+        using (WorldSnapshotCommit.Begin(bypassCharges: false))
         {
-            PublishLoyalty(character);
-            return consumed;
-        }
+            consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, templateId, count, item);
+            if (consumed <= 0)
+                return 0;
 
-        TryRestore(character, container, templateId, consumed, "loyalty");
-        return 0;
+            var loyalty = ItemWalletRules.LoyaltyFromCount(consumed);
+            AccountLiveWallet.QueueLoyalty(character.AccountId, loyalty);
+            WorldSnapshotCommit.RequestFlush(bypassCharges: false);
+            if (WorldSnapshotCommit.FlushNow(bypassCharges: false))
+            {
+                PublishLoyalty(character);
+                return consumed;
+            }
+
+            AccountLiveWallet.UnqueueLoyalty(character.AccountId, loyalty);
+            TryRestore(character, container, templateId, consumed, "loyalty");
+            return 0;
+        }
     }
 
     public static bool CreditCredits(Character character, int amount)
@@ -159,28 +165,35 @@ public static class ItemWallet
         if (character == null || container == null || count <= 0 || credits <= 0)
             return credits == 0 && count == 0;
 
-        var consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, templateId, count, null);
-        if (consumed <= 0)
-            return false;
-
-        var pay = consumed == count
-            ? credits
-            : ItemWalletRules.CreditsFromEffect(credits / count, consumed);
-        if (pay <= 0)
+        var consumed = 0;
+        var pay = 0;
+        using (WorldSnapshotCommit.Begin(bypassCharges: false))
         {
+            consumed = container.ConsumeItem(ItemTaskType.ConsumeSkillSource, templateId, count, null);
+            if (consumed <= 0)
+                return false;
+
+            pay = consumed == count
+                ? credits
+                : ItemWalletRules.CreditsFromEffect(credits / count, consumed);
+            if (pay <= 0)
+            {
+                TryRestore(character, container, templateId, consumed, "credits");
+                return false;
+            }
+
+            AccountLiveWallet.QueueCredits(character.AccountId, pay);
+            WorldSnapshotCommit.RequestFlush(bypassCharges: false);
+            if (WorldSnapshotCommit.FlushNow(bypassCharges: false))
+            {
+                PublishCredits(character);
+                return true;
+            }
+
+            AccountLiveWallet.UnqueueCredits(character.AccountId, pay);
             TryRestore(character, container, templateId, consumed, "credits");
             return false;
         }
-
-        if (PersistWithRemoval(character, () => AccountLiveWallet.QueueCredits(character.AccountId, pay),
-                () => AccountLiveWallet.UnqueueCredits(character.AccountId, pay)))
-        {
-            PublishCredits(character);
-            return true;
-        }
-
-        TryRestore(character, container, templateId, consumed, "credits");
-        return false;
     }
 
     private static int ConvertCashContainer(Character character, ItemContainer container)
@@ -208,21 +221,6 @@ public static class ItemWallet
         return credited;
     }
 
-    private static bool PersistWithRemoval(Character character, Action queue, Action unqueue)
-    {
-        using (WorldSnapshotCommit.Begin(bypassCharges: false))
-        {
-            queue();
-            WorldSnapshotCommit.RequestFlush(bypassCharges: false);
-        }
-
-        if (WorldSnapshotCommit.AcceptedLast(bypassCharges: false, failNextPersist: false))
-            return true;
-
-        unqueue();
-        return false;
-    }
-
     private static void PublishLoyalty(Character character)
     {
         character.BmPoint = AccountManager.Instance.GetAccountDetails(character.AccountId).Loyalty;
@@ -245,8 +243,11 @@ public static class ItemWallet
         var restore = ItemWalletRules.RestoreAfterFailedCredit(consumed, creditOk: false);
         if (restore <= 0)
             return;
-        if (container.AcquireDefaultItem(ItemTaskType.ConsumeSkillSource, templateId, restore))
-            return;
+        using (ItemWalletRules.SuppressAcquireConvert())
+        {
+            if (container.AcquireDefaultItem(ItemTaskType.ConsumeSkillSource, templateId, restore, convertWallet: false))
+                return;
+        }
 
         Logger.Error(
             "Wallet convert consumed {0} without a {1} credit and could not restore them for {2}",

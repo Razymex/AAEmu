@@ -21,6 +21,11 @@ public class ItemWalletRulesTests
         await Assert.That(ItemWalletRules.CreditOnAcquire(28586, SlotType.Mail)).IsFalse();
         await Assert.That(ItemWalletRules.CreditOnAcquire(28586, SlotType.Auction)).IsFalse();
         await Assert.That(ItemWalletRules.CreditOnAcquire(29911, SlotType.Inventory)).IsFalse();
+        await Assert.That(ItemWalletRules.ShouldCreditOnAcquire(28586, SlotType.Inventory, convertWallet: true)).IsTrue();
+        await Assert.That(ItemWalletRules.ShouldCreditOnAcquire(28586, SlotType.Inventory, convertWallet: false)).IsFalse();
+        using (ItemWalletRules.SuppressAcquireConvert())
+            await Assert.That(ItemWalletRules.ShouldCreditOnAcquire(28586, SlotType.Inventory, convertWallet: true)).IsFalse();
+        await Assert.That(ItemWalletRules.ShouldCreditOnAcquire(28586, SlotType.Inventory, convertWallet: true)).IsTrue();
     }
 
     [Test]

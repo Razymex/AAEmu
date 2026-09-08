@@ -608,6 +608,38 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         return status;
     }
 
+    /// <summary>
+    /// Writes a requested snapshot now while staying inside <see cref="DeferPersist"/>.
+    /// Outermost scopes release the gate only for the write (a save needs it exclusively).
+    /// Nested scopes leave the request for the outer dispose and report
+    /// <see cref="WorldSaveStatus.Busy"/>.
+    /// </summary>
+    public WorldSaveStatus FlushRequestedNow()
+    {
+        if (t_persistDeferDepth > 1)
+            return WorldSaveStatus.Busy;
+
+        if (t_persistDeferDepth == 0)
+            return EnsurePersisted();
+
+        if (!t_persistRequested)
+        {
+            t_lastFlushStatus = WorldSaveStatus.Saved;
+            return WorldSaveStatus.Saved;
+        }
+
+        t_persistRequested = false;
+        PersistenceGate.ExitOperation();
+        try
+        {
+            return FlushPersist();
+        }
+        finally
+        {
+            PersistenceGate.EnterOperation();
+        }
+    }
+
     private WorldSaveStatus EnsurePersisted()
     {
         if (t_persistDeferDepth > 0)

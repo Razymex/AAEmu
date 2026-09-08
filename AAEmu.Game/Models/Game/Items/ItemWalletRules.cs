@@ -5,6 +5,9 @@ namespace AAEmu.Game.Models.Game.Items;
 /// </summary>
 public static class ItemWalletRules
 {
+    [ThreadStatic]
+    private static int t_suppressAcquireConvert;
+
     /// <summary>
     /// Lulu's stamp (28586) is the BM mileage item. Right-click is refused because
     /// <c>use_skill_id</c> is 0 — the shop and HUD read <c>GetBmPoint</c>, not the stack.
@@ -17,6 +20,36 @@ public static class ItemWalletRules
     /// </summary>
     public static bool CreditOnAcquire(uint templateId, SlotType container) =>
         IsBmMileage(templateId) && container is SlotType.Inventory or SlotType.Bank;
+
+    /// <summary>
+    /// Failed-save restore must put the stamp back in the bag. Conversion here would
+    /// credit loyalty again while the original row is still in the database.
+    /// </summary>
+    public static bool ShouldCreditOnAcquire(uint templateId, SlotType container, bool convertWallet) =>
+        convertWallet && t_suppressAcquireConvert == 0 && CreditOnAcquire(templateId, container);
+
+    /// <summary>
+    /// Blocks convert-on-acquire, including <c>OnAcquiredItem</c>, for the restore path.
+    /// </summary>
+    public static IDisposable SuppressAcquireConvert()
+    {
+        t_suppressAcquireConvert++;
+        return new SuppressScope();
+    }
+
+    private sealed class SuppressScope : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            if (t_suppressAcquireConvert > 0)
+                t_suppressAcquireConvert--;
+        }
+    }
 
     public static int LoyaltyFromCount(int count) => count > 0 ? count : 0;
 

@@ -956,7 +956,7 @@ public class Inventory
         {
             var container = item._holdingContainer;
             if (container != null &&
-                ItemWalletRules.CreditOnAcquire(item.TemplateId, container.ContainerType) &&
+                ItemWalletRules.ShouldCreditOnAcquire(item.TemplateId, container.ContainerType, convertWallet: true) &&
                 Owner is Character character)
             {
                 ItemWallet.ConsumeThenCreditLoyalty(character, container, item.TemplateId, count, item);
