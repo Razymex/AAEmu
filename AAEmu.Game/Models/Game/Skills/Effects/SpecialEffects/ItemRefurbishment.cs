@@ -7,6 +7,7 @@ using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -158,6 +159,11 @@ public class ItemRefurbishment : SpecialEffectAction
         // purpose: the piece has already gone out on its own detail packet, and handing the same
         // blob over a second time is what leaves an item drawn as broken.
         owner.SendPacket(new SCItemTaskSuccessPacket(ItemTaskType.ScaleCap, [], []));
+        owner.Events?.OnQuestProgressStat(owner, new OnQuestProgressStatArgs
+        {
+            Kind = QuestProgressStatKind.EnchantScale,
+            Amount = 1
+        });
 
         var afterScale = itemBroken ? (ushort)0 : equipItem.EnchantScale;
         // The rung itself, which is what the window prints as "+N". The ladder's own scale column

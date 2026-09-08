@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Chat;
+using AAEmu.Game.Models.Game.Items;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -112,6 +113,10 @@ public class CSNotifyInGamePacket() : GamePacket(CSOffsets.CSNotifyInGamePacket,
 
         // Daily schedule: load persisted contracts for today, then reset-count budget.
         TodayAssignmentManager.Instance.OnCharacterEnterWorld(Connection.ActiveChar);
+        AccountAttendanceManager.Instance.SendMonth(Connection.ActiveChar);
+        ItemWallet.ConvertOwnedMileage(Connection.ActiveChar);
+        ItemWallet.ConvertOwnedCashPacks(Connection.ActiveChar);
+        ScheduleItemManager.Instance.SendActive(Connection.ActiveChar);
 
         // Territory ownership for the world map and the territory UI (both the Hero/faction and the guild
         // castle systems), then the Hero panel state.

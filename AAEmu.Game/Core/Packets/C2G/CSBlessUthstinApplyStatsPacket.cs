@@ -3,13 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Confirm or cancel a pending Bless Uthstin roll. Kinds are 0-based.</summary>
 public class CSBlessUthstinApplyStatsPacket() : GamePacket(CSOffsets.CSBlessUthstinApplyStatsPacket, 1)
 {
     public bool BApply { get; private set; }
@@ -29,5 +23,14 @@ public class CSBlessUthstinApplyStatsPacket() : GamePacket(CSOffsets.CSBlessUths
         IncStatsPoint = stream.ReadUInt32();
         DecStatsPoint = stream.ReadUInt32();
         PageIndex = stream.ReadInt32();
+
+        Connection.ActiveChar?.BlessUthstin?.TryApply(
+            BApply,
+            TypeValue,
+            (int)IncStatsKind,
+            (int)DecStatsKind,
+            (int)IncStatsPoint,
+            (int)DecStatsPoint,
+            PageIndex);
     }
 }

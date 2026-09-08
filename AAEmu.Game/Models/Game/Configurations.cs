@@ -248,15 +248,15 @@ public class AccountConfig
     public int AccessLevelFirstCharacter { get; set; } = 100;
 
     /// <summary>
-    /// Grants every character the highest grade in premium_grades instead of deriving it from
-    /// characters.point. Off by default, so the point thresholds (1, 50, 125, 225, 400) keep deciding.
+    /// Gives every account the stacked Patron column (上古会员 1001 + 生活会员 1002) and the first
+    /// paid <c>premium_grades</c> labor base. On by default; the shop does not sell this.
     /// </summary>
-    /// <remarks>
-    /// Turning this on is what "everyone is a max Patron" means: it moves the whole account off the
-    /// free tier (grade 1, which premium_grades gives max_labor = 0, so the account/"Offline" pool
-    /// does not exist for it) onto the top grade and its 6000/5000 caps and 15/10 regeneration.
-    /// The grade also travels in UnitState, so the client's own labor cap display follows it.
-    /// </remarks>
+    public bool GrantStackedPatron { get; set; } = true;
+
+    /// <summary>
+    /// Pins the point grade to the highest <c>premium_grades</c> row instead of the first paid floor.
+    /// Memberships still come from <see cref="GrantStackedPatron"/>.
+    /// </summary>
     public bool ForceMaxPremiumGrade { get; set; } = false;
 }
 

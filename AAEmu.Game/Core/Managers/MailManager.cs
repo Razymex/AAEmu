@@ -26,6 +26,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     public Dictionary<long, BaseMail> AllPlayerMails => _allPlayerMails;
     private readonly Dictionary<long, BaseMail> _pendingMails = [];
     private List<long> _deletedMailIds = [];
+    [ThreadStatic] private static List<(BaseMail Mail, int Stamp)> t_writtenMails;
+    [ThreadStatic] private static List<long> t_deletedWritten;
     // Unused: private object _lock = new();
 
     public static int CostNormal { get; set; } = 50;
@@ -469,15 +471,20 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                     command.Prepare();
                     command.ExecuteNonQuery();
                 }
-                _deletedMailIds.Clear();
+
+                t_deletedWritten = [.. _deletedMailIds];
             }
         }
 
         foreach (var mtbs in _allPlayerMails)
         {
-            if (!mtbs.Value.IsDirty || !MailDeliveryRules.IsPublished(mtbs.Value))
+            if (!MailDeliveryRules.IsPublished(mtbs.Value))
+                continue;
+            if (!mtbs.Value.TryCaptureDirtyStamp(out var stamp))
                 continue;
             WriteMail(mtbs.Value, connection, transaction);
+            t_writtenMails ??= [];
+            t_writtenMails.Add((mtbs.Value, stamp));
             updatedCount++;
         }
 
@@ -531,12 +538,40 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         }
 
         command.Prepare();
-        command.ExecuteNonQuery();
-        mail.IsDirty = false;
+        if (command.ExecuteNonQuery() < 1)
+            throw new InvalidOperationException($"Mail {mail.Id} was not written");
+    }
+
+    public void ConfirmSaved()
+    {
+        if (t_writtenMails != null)
+        {
+            foreach (var (mail, stamp) in t_writtenMails)
+                mail.TryClearDirty(stamp);
+        }
+
+        if (t_deletedWritten != null)
+        {
+            lock (_deletedMailIds)
+            {
+                foreach (var id in t_deletedWritten)
+                    _deletedMailIds.Remove(id);
+            }
+        }
+
+        t_writtenMails = null;
+        t_deletedWritten = null;
+    }
+
+    public void DiscardPendingClears()
+    {
+        t_writtenMails = null;
+        t_deletedWritten = null;
     }
 
     [ThreadStatic] private static int t_persistDeferDepth;
     [ThreadStatic] private static bool t_persistRequested;
+    [ThreadStatic] private static WorldSaveStatus t_lastFlushStatus;
 
     /// <summary>
     /// Marks a money operation. Holds every <see cref="PersistNow"/> request made on this
@@ -565,6 +600,48 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     /// </summary>
     public void PersistNow() => _ = EnsurePersisted();
 
+    /// <summary>Status of the last flush on this thread, then resets to <see cref="WorldSaveStatus.Saved"/>.</summary>
+    public WorldSaveStatus TakeLastFlushStatus()
+    {
+        var status = t_lastFlushStatus;
+        t_lastFlushStatus = WorldSaveStatus.Saved;
+        return status;
+    }
+
+    /// <summary>
+    /// Writes a requested snapshot now while staying inside <see cref="DeferPersist"/>.
+    /// Outermost scopes release the gate only for the write (a save needs it exclusively).
+    /// Nested scopes leave the request for the outer dispose and report
+    /// <see cref="WorldSaveStatus.Busy"/>.
+    /// </summary>
+    public WorldSaveStatus FlushRequestedNow() => FlushRequestedNow(null);
+
+    public WorldSaveStatus FlushRequestedNow(Action onFailed)
+    {
+        if (t_persistDeferDepth > 1)
+            return WorldSaveStatus.Busy;
+
+        if (t_persistDeferDepth == 0)
+            return FlushPersist(onFailed);
+
+        if (!t_persistRequested)
+        {
+            t_lastFlushStatus = WorldSaveStatus.Saved;
+            return WorldSaveStatus.Saved;
+        }
+
+        t_persistRequested = false;
+        PersistenceGate.ExitOperation();
+        try
+        {
+            return FlushPersist(onFailed);
+        }
+        finally
+        {
+            PersistenceGate.EnterOperation();
+        }
+    }
+
     private WorldSaveStatus EnsurePersisted()
     {
         if (t_persistDeferDepth > 0)
@@ -576,15 +653,19 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
         return FlushPersist();
     }
 
-    private WorldSaveStatus FlushPersist()
+    private WorldSaveStatus FlushPersist(Action onFailed = null)
     {
         var saver = SingletonContainer.ServiceProvider?.GetService<ISaveManager>();
         if (saver == null)
+        {
+            t_lastFlushStatus = WorldSaveStatus.Saved;
             return WorldSaveStatus.Saved;
+        }
 
         // A save that is already running took the gate after this operation released it, so
         // it carries everything the operation wrote. Nothing is lost by not saving twice.
-        var status = saver.TrySave();
+        var status = saver.TrySave(onFailed);
+        t_lastFlushStatus = status;
         if (status == WorldSaveStatus.Busy)
             Logger.Debug("Mail persist folded into the save already in progress");
         return status;
@@ -608,7 +689,10 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             // Release the gate before saving: the save needs it exclusively.
             PersistenceGate.ExitOperation();
             if (!t_persistRequested)
+            {
+                t_lastFlushStatus = WorldSaveStatus.Saved;
                 return;
+            }
 
             t_persistRequested = false;
             owner.FlushPersist();

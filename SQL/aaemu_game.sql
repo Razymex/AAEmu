@@ -34,6 +34,66 @@ CREATE TABLE IF NOT EXISTS `ability_set_skills` (
   PRIMARY KEY (`owner`, `slot`, `skill_id`, `is_passive`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Skills/passives snapshotted into a skillsaver slot';
 
+CREATE TABLE IF NOT EXISTS `character_bless_uthstin` (
+  `owner` int unsigned NOT NULL,
+  `select_page_index` int NOT NULL DEFAULT 0,
+  `extend_max_stats` int NOT NULL DEFAULT 0,
+  `apply_extend_count` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`owner`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Bless Uthstin header (selected page and cap)';
+
+CREATE TABLE IF NOT EXISTS `character_bless_uthstin_pages` (
+  `owner` int unsigned NOT NULL,
+  `page_index` tinyint unsigned NOT NULL,
+  `str` int NOT NULL DEFAULT 0,
+  `dex` int NOT NULL DEFAULT 0,
+  `sta` int NOT NULL DEFAULT 0,
+  `int` int NOT NULL DEFAULT 0,
+  `spi` int NOT NULL DEFAULT 0,
+  `apply_normal` int NOT NULL DEFAULT 0,
+  `apply_special` int NOT NULL DEFAULT 0,
+  PRIMARY KEY (`owner`, `page_index`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Bless Uthstin applied stats per page';
+
+CREATE TABLE IF NOT EXISTS `character_arche_passes` (
+  `owner` int unsigned NOT NULL,
+  `pass_id` int unsigned NOT NULL,
+  `status` tinyint unsigned NOT NULL DEFAULT 0,
+  `point` bigint NOT NULL DEFAULT 0,
+  `premium` tinyint(1) NOT NULL DEFAULT 0,
+  `last_reward_tier` int unsigned NOT NULL DEFAULT 0,
+  `last_premium_reward_tier` int unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`owner`, `pass_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Arche Pass ownership and progress';
+
+CREATE TABLE IF NOT EXISTS `character_arche_pass_missions` (
+  `owner` int unsigned NOT NULL,
+  `complete_used` int unsigned NOT NULL DEFAULT 0,
+  `change_used` int unsigned NOT NULL DEFAULT 0,
+  `week_start` date NOT NULL,
+  PRIMARY KEY (`owner`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Arche Pass weekly mission counters';
+
+CREATE TABLE IF NOT EXISTS `account_attendances` (
+  `account_id` int unsigned NOT NULL,
+  `year` smallint NOT NULL,
+  `month` tinyint NOT NULL,
+  `day` tinyint NOT NULL,
+  `attended_at` bigint NOT NULL,
+  `is_archelife` tinyint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`account_id`, `year`, `month`, `day`),
+  KEY `idx_account_month` (`account_id`, `year`, `month`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Event Center attendance claims';
+
+CREATE TABLE IF NOT EXISTS `account_schedule_items` (
+  `account_id` int unsigned NOT NULL,
+  `schedule_id` int NOT NULL,
+  `gave` tinyint unsigned NOT NULL DEFAULT 0,
+  `cumulated` bigint NOT NULL DEFAULT 0,
+  `updated` bigint NOT NULL,
+  PRIMARY KEY (`account_id`, `schedule_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='HUD schedule-item timers';
+
 
 CREATE TABLE IF NOT EXISTS `accounts` (
   `account_id` INT(11) NOT NULL,

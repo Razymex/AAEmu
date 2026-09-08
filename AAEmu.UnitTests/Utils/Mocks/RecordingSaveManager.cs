@@ -37,7 +37,9 @@ public sealed class RecordingSaveManager : ISaveManager
 
     public bool DoSave() => TrySave() == WorldSaveStatus.Saved;
 
-    public WorldSaveStatus TrySave()
+    public WorldSaveStatus TrySave() => TrySave(null);
+
+    public WorldSaveStatus TrySave(Action onFailed)
     {
         if (_isSaving)
         {
@@ -48,7 +50,16 @@ public sealed class RecordingSaveManager : ISaveManager
         if (FailNext)
         {
             FailNext = false;
-            return WorldSaveStatus.Failed;
+            PersistenceGate.EnterSave();
+            try
+            {
+                onFailed?.Invoke();
+                return WorldSaveStatus.Failed;
+            }
+            finally
+            {
+                PersistenceGate.ExitSave();
+            }
         }
 
         PersistenceGate.EnterSave();

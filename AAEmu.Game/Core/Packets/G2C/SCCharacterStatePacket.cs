@@ -80,10 +80,7 @@ public class SCCharacterStatePacket(Character character) : GamePacket(SCOffsets.
         stream.Write(0u);                                   // totalReportBadUser
         stream.Write(character.AbilitySets?.UsableSlotCount ?? CharacterAbilitySets.DefaultUsableSlots); // usableAbilSetSlotCount (u8)
 
-        stream.Write(0u);                                   // _pageInfos size=0 (UnitState_SerializePageInfoList)
-        stream.Write(0u);                                   // _selectPageIndex
-        stream.Write(0u);                                   // _extendMaxStats
-        stream.Write(0u);                                   // _applyExtendCount
+        (character.BlessUthstin ?? new CharacterBlessUthstin()).WritePageInfos(stream);
 
         stream.Write((uint)character.UnitStateType);         // type
         stream.Write(character.AppellationStampId);          // appellationStamp

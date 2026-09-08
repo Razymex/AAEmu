@@ -14,6 +14,12 @@ public interface ISaveManager : IInitializable
     /// failure — another save already holds the caller's state.
     /// </summary>
     WorldSaveStatus TrySave();
+
+    /// <summary>
+    /// Same as <see cref="TrySave()"/>, and <paramref name="onFailed"/> runs before the save
+    /// lock is released when the snapshot does not commit.
+    /// </summary>
+    WorldSaveStatus TrySave(Action onFailed);
 }
 
 public enum WorldSaveStatus

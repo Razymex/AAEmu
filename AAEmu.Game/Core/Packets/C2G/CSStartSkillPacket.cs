@@ -121,6 +121,8 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         // Skillsaver apply: stash slot before zone/local split so ActivateSavedAbilitySet can finish it.
         if (skillId == CharacterAbilitySets.ActivateSkillId)
             StashAbilitySetActivationSlot(activeCharacter, skillObject);
+        if (skillId == BlessUthstinRules.SelectSkillId)
+            StashBlessUthstinSelectPage(activeCharacter, skillObject);
 
         // ZoneAuthority: Zone owns cast/effects. Forward WZSkillStarted + emit SC cast UX only.
         // Local Skill.Use builds plot CompressedGamePackets (DD04) that desync the client (sc error / zip fail).
@@ -421,5 +423,28 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
 
         Logger.Info("AbilitySet activate stash {0}: slot {1} (skillObject={2})", character.Name, slot, skillObject.Flag);
         character.AbilitySets?.SetPendingActivationSlot(slot);
+    }
+
+    /// <summary>
+    /// Bless Uthstin activate casts skill 37244; the special effect needs the 0-based page.
+    /// </summary>
+    private static void StashBlessUthstinSelectPage(Character character, SkillObject skillObject)
+    {
+        var page = skillObject switch
+        {
+            SkillObjectBlessUthstinPage uthstin => uthstin.PageIndex,
+            SkillObjectUnk5 unk5 => unk5.Step,
+            _ => -1
+        };
+
+        if (page < 0)
+        {
+            Logger.Warn(
+                "BlessUthstin select stash {0}: no page in skillObject type={1}",
+                character.Name, skillObject?.Flag);
+            return;
+        }
+
+        character.BlessUthstin?.SetPendingSelectPage(page);
     }
 }

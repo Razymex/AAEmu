@@ -6,7 +6,7 @@ using AAEmu.Game.Models.Game;
 namespace AAEmu.Game.Core.Network.Connections;
 
 /// <summary>
-/// Sends the account's attribute list, including the memberships a forced max grade grants.
+/// Sends the account's attribute list, including the stacked Patron memberships.
 /// </summary>
 /// <remarks>
 /// Shared by the first handshake and by the return from world to character select. The client keeps its
@@ -26,9 +26,9 @@ public static class AccountAttributePublisher
 
         // Memberships are synthesised per session rather than stored, so clearing the setting takes
         // effect on the next login and leaves no rows behind.
-        if (AppConfiguration.Instance.Account?.ForceMaxPremiumGrade == true)
+        if (AccountPatron.GrantStacked)
         {
-            foreach (var membership in AccountMemberships.ForcedIds)
+            foreach (var membership in AccountPatronRules.StackedMemberships)
             {
                 if (attributes.Any(a => a.KindId == (uint)AccountAttributeKind.AccountBuff &&
                                         a.KindValue == membership))
@@ -41,8 +41,8 @@ public static class AccountAttributePublisher
                     KindValue = membership,
                     WorldId = 0,
                     Count = 1,
-                    Starts = connection.Payment.StartTime,
-                    Expires = connection.Payment.EndTime
+                    Starts = AccountPatronRules.PermanentAttributeTime,
+                    Expires = AccountPatronRules.PermanentAttributeTime
                 });
             }
         }

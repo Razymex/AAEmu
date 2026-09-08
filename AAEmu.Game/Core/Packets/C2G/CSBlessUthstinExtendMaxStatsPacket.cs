@@ -3,16 +3,11 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO(v10): the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// packet has no body. Every parameterless C2S type folds onto that one function, so the
-/// shared address is identical-COMDAT folding, not a base-class fall-through.
-/// </remarks>
+/// <summary>Spend the extend item to raise this character's Bless Uthstin cap. Packet has no body.</summary>
 public class CSBlessUthstinExtendMaxStatsPacket() : GamePacket(CSOffsets.CSBlessUthstinExtendMaxStatsPacket, 1)
 {
     public override void Read(PacketStream stream)
     {
+        Connection.ActiveChar?.BlessUthstin?.TryExtend();
     }
 }

@@ -3,13 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Copy one Bless Uthstin page onto another. Both indexes are 0-based.</summary>
 public class CSBlessUthstinCopyPagePacket() : GamePacket(CSOffsets.CSBlessUthstinCopyPagePacket, 1)
 {
     public int SrcPageIndex { get; private set; }
@@ -19,5 +13,6 @@ public class CSBlessUthstinCopyPagePacket() : GamePacket(CSOffsets.CSBlessUthsti
     {
         SrcPageIndex = stream.ReadInt32();
         DstPageIndex = stream.ReadInt32();
+        Connection.ActiveChar?.BlessUthstin?.TryCopy(SrcPageIndex, DstPageIndex);
     }
 }

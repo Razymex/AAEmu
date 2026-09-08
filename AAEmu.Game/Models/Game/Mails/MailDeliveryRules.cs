@@ -1,4 +1,6 @@
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Items.Containers;
 
 namespace AAEmu.Game.Models.Game.Mails;
 
@@ -28,6 +30,40 @@ public static class MailDeliveryRules
 
     public static bool CanPersistAttachment(Item item) =>
         item is { SlotType: SlotType.Mail, OwnerId: > 0 };
+
+    /// <summary>
+    /// Staging into <c>MailAttachments</c> is not a delivery. Only a successful send is.
+    /// Drop the staged rows so a failed send can retry without leaking items.
+    /// </summary>
+    public static bool TryDiscardStagedAttachments(ItemContainer container, IEnumerable<Item> staged)
+    {
+        if (container == null)
+        {
+            if (staged == null)
+                return true;
+            foreach (var item in staged)
+            {
+                if (item != null)
+                    return false;
+            }
+
+            return true;
+        }
+
+        var ok = true;
+        if (staged == null)
+            return true;
+
+        foreach (var item in staged)
+        {
+            if (item == null)
+                continue;
+            if (!container.RemoveItem(ItemTaskType.Invalid, item, true))
+                ok = false;
+        }
+
+        return ok;
+    }
 
     public static bool IsPublished(BaseMail mail) =>
         mail is { IsPendingPublish: false };

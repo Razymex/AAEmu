@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Account;
+using MySql.Data.MySqlClient;
 
 using NLog;
 
@@ -44,13 +45,6 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
     /// </remarks>
     public (int Point, uint Grade) GetAccountPremium(GameConnection connection)
     {
-        if (AppConfiguration.Instance.Account?.ForceMaxPremiumGrade == true)
-        {
-            var forced = PremiumGameData.Instance.MaxGradeId;
-            if (forced > 0)
-                return (PremiumGameData.Instance.GetGrade(forced)?.Point ?? 0, forced);
-        }
-
         var point = 0;
         if (connection?.Characters is { Count: > 0 })
         {
@@ -62,7 +56,8 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
             point = GetMaxCharacterPoint(connection.AccountId);
         }
 
-        return (point, PremiumGameData.Instance.GetGradeForPoint(point));
+        point = AccountPatron.ResolvePoint(point);
+        return (point, AccountPatron.ResolveGrade(PremiumGameData.Instance.GetGradeForPoint(point)));
     }
 
     /// <summary>
@@ -248,7 +243,87 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
         }
     }
 
+    /// <summary>
+    /// Same write as <see cref="AddCredits"/> on the caller's transaction so a claim and
+    /// its cash reward commit or roll back together.
+    /// </summary>
+    public bool AddCreditsOn(uint accountId, int creditsAmount, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (connection == null || transaction == null || creditsAmount == 0)
+            return creditsAmount == 0;
+
+        object accLock;
+        lock (_locks)
+        {
+            if (!_locks.TryGetValue(accountId, out accLock))
+            {
+                accLock = new object();
+                _locks.Add(accountId, accLock);
+            }
+        }
+
+        lock (accLock)
+        {
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.Connection = connection;
+                command.Transaction = transaction;
+                command.CommandText = "INSERT INTO accounts (account_id, credits) VALUES(@acc_id, @credits_amount) ON DUPLICATE KEY UPDATE credits = credits + @credits_amount";
+                command.Parameters.AddWithValue("@acc_id", accountId);
+                command.Parameters.AddWithValue("@credits_amount", creditsAmount);
+                command.Prepare();
+                return command.ExecuteNonQuery() > 0;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"{e.Message}\n{e.StackTrace}");
+                return false;
+            }
+        }
+    }
+
     public bool RemoveCredits(uint accountId, int credits) => AddCredits(accountId, -credits);
+
+    /// <summary>
+    /// Same write as <see cref="AddLoyalty"/> on the caller's transaction so a convert
+    /// and its bag removal commit or roll back together.
+    /// </summary>
+    public bool AddLoyaltyOn(uint accountId, int loyaltyAmount, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (connection == null || transaction == null || loyaltyAmount == 0)
+            return loyaltyAmount == 0;
+
+        object accLock;
+        lock (_locks)
+        {
+            if (!_locks.TryGetValue(accountId, out accLock))
+            {
+                accLock = new object();
+                _locks.Add(accountId, accLock);
+            }
+        }
+
+        lock (accLock)
+        {
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.Connection = connection;
+                command.Transaction = transaction;
+                command.CommandText = "INSERT INTO accounts (account_id, loyalty) VALUES(@acc_id, @loyalty_amount) ON DUPLICATE KEY UPDATE loyalty = loyalty + @loyalty_amount";
+                command.Parameters.AddWithValue("@acc_id", accountId);
+                command.Parameters.AddWithValue("@loyalty_amount", loyaltyAmount);
+                command.Prepare();
+                return command.ExecuteNonQuery() > 0;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"{e.Message}\n{e.StackTrace}");
+                return false;
+            }
+        }
+    }
 
     public bool AddLoyalty(uint accountId, int loyaltyAmount)
     {

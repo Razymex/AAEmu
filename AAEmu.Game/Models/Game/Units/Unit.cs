@@ -773,7 +773,9 @@ public class Unit : BaseUnit, IUnit
         ((Unit)killer).Events.OnKill(this, new OnKillArgs { Killer = (Unit)killer, Victim = this });
 
         Buffs.RemoveEffectsOnDeath();
-        killer.BroadcastPacket(new SCUnitDeathPacket(ObjId, killReason, (Unit)killer), true);
+        var lostExp = this is Character dead ? dead.LastDeathLostExp : 0;
+        var deathDurabilityLossRatio = this is Character deadChar ? deadChar.LastDeathDurabilityLossRatio : (byte)0;
+        killer.BroadcastPacket(new SCUnitDeathPacket(ObjId, killReason, (Unit)killer, lostExp, deathDurabilityLossRatio), true);
         if (killer == this)
         {
             switch (this)

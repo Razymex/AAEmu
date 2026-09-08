@@ -1,25 +1,21 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Reset one Bless Uthstin page. The client also echoes that page's applied stats.</summary>
 public class CSBlessUthstinInitStatsPacket() : GamePacket(CSOffsets.CSBlessUthstinInitStatsPacket, 1)
 {
     public int UthstinPageIndex { get; private set; }
-    public uint ChangeStat { get; private set; }
-    public uint Stats { get; private set; }
 
     public override void Read(PacketStream stream)
     {
         UthstinPageIndex = stream.ReadInt32();
-        ChangeStat = stream.ReadUInt32();
-        Stats = stream.ReadUInt32();
+        _ = stream.ReadInt32(); // changeStat — client echo, not authoritative
+        for (var i = 0; i < BlessUthstinRules.StatCount; i++)
+            _ = stream.ReadInt32();
+
+        Connection.ActiveChar?.BlessUthstin?.TryInit(UthstinPageIndex);
     }
 }

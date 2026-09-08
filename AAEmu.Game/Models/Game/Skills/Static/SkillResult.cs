@@ -387,6 +387,10 @@ public enum SkillResultKeys
     skill_urk_no_target_item_tag,
     skill_urk_need_ulc_activate,
     skill_urk_cannot_use_by_ulc_activate,
+    skill_urk_premium_arche_pass,
+    skill_urk_enable_arche_pass,
+    skill_urk_enable_arche_pass_with_type,
+    skill_urk_add_arche_pass_point,
 }
 // ReSharper restore InconsistentNaming
 
@@ -565,6 +569,10 @@ public static class SkillResultHelper
             SkillResultKeys.skill_urk_no_target_item_tag => SkillResult.UrkNoTargetItemTag,
             SkillResultKeys.skill_urk_need_ulc_activate => SkillResult.UrkNeedUlcActivate,
             SkillResultKeys.skill_urk_cannot_use_by_ulc_activate => SkillResult.UrkCannotUseByUlcActivate,
+            SkillResultKeys.skill_urk_premium_arche_pass => SkillResult.UrkPremiumArchePass,
+            SkillResultKeys.skill_urk_enable_arche_pass => SkillResult.UrkEnableArchePass,
+            SkillResultKeys.skill_urk_enable_arche_pass_with_type => SkillResult.UrkEnableArchePassWithType,
+            SkillResultKeys.skill_urk_add_arche_pass_point => SkillResult.UrkAddArchePassPoint,
             _ => SkillResult.UrkUnknown
         };
     }

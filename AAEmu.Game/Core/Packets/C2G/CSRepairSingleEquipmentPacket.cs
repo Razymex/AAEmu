@@ -13,8 +13,14 @@ public class CSRepairSingleEquipmentPacket() : GamePacket(CSOffsets.CSRepairSing
         //stream.ReadByte(); // not for version 1.2
         var slot = stream.ReadByte();
         var autoUseAAPoint = stream.ReadBoolean();
+        var inBag = stream.ReadBoolean();
 
-        Logger.Debug("RepairSingleEquipment, SlotType: {0}, Slot: {1}, AutoUseAAPoint: {2}", slotType, slot, autoUseAAPoint);
+        Logger.Debug(
+            "RepairSingleEquipment, SlotType: {0}, Slot: {1}, AutoUseAAPoint: {2}, InBag: {3}",
+            slotType,
+            slot,
+            autoUseAAPoint,
+            inBag);
 
         var item = Connection.ActiveChar.Inventory.GetItem(slotType, slot);
 

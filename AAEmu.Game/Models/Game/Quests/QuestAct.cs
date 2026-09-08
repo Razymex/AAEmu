@@ -185,6 +185,11 @@ public class QuestAct(QuestComponent parentComponent, QuestActTemplate template)
         Template.OnLaborPower(this, sender, args);
     }
 
+    public virtual void OnQuestProgressStat(object sender, OnQuestProgressStatArgs args)
+    {
+        Template.OnQuestProgressStat(this, sender, args);
+    }
+
     /// <summary>
     /// OnExpressFire 
     /// </summary>

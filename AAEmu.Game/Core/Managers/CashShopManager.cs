@@ -16,6 +16,8 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
 
     public bool Enabled { get; private set; }
 
+    public bool HasCatalog => MenuItems.Count > 0 && ShopItems.Count > 0 && SKUs.Count > 0;
+
     public bool IsOpenForPlayers => Enabled;
 
     public Dictionary<uint, IcsSku> SKUs { get; set; } = [];
@@ -150,8 +152,9 @@ public class CashShopManager(IWorldManager worldManager, IAccountManager account
             }
         }
 
-        // If something didn't load, force close the shop
-        if (MenuItems.Count <= 0 || ShopItems.Count <= 0 || SKUs.Count <= 0)
+        if (HasCatalog)
+            EnabledShop();
+        else
             DisableShop();
     }
 

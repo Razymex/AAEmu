@@ -1,5 +1,7 @@
 ﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game;
+using AAEmu.Game.Models.Game.CashShop;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -9,6 +11,9 @@ public class CSPremiumServiceBuyPacket() : GamePacket(CSOffsets.CSPremiumService
     {
         var cid = stream.ReadInt32();
 
-        Logger.Warn("PremiumServiceBuy, CId: {0}", cid);
+        Logger.Info("PremiumServiceBuy refused, CId: {0} — Patron is granted, not sold", cid);
+        Connection.ActiveChar?.SendErrorMessage(ErrorMessageType.PremiumServiceBuyFail);
+        // Refreshing the list drops the wait overlay the Buy confirm leaves open.
+        PremiumServiceCatalog.Send(Connection);
     }
 }

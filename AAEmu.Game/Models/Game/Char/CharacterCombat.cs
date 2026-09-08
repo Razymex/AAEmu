@@ -6,7 +6,9 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.Faction;
+using AAEmu.Game.Models.Game.Formulas;
 using AAEmu.Game.Models.Game.Items;
+using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Skills.Effects;
@@ -31,6 +33,9 @@ public partial class Character
     private const int DeathCountResetMinutes = 5;
     private int _consecutiveDeathCount;
     private DateTime _lastDeathTime = DateTime.MinValue;
+
+    public int LastDeathLostExp { get; private set; }
+    public byte LastDeathDurabilityLossRatio { get; private set; }
 
     public uint ResurrectHpPercent { get; set; } = 1;
     public uint ResurrectMpPercent { get; set; } = 1;
@@ -63,6 +68,7 @@ public partial class Character
     {
         // Escalating respawn timer — runs BEFORE base.DoDie sends SCUnitDeathPacket
         ComputeDeathWaitTime();
+        ApplyDeathPenalties();
 
         base.DoDie(killer, killReason);
 
@@ -143,6 +149,68 @@ public partial class Character
         Logger.Debug($"Death #{_consecutiveDeathCount} for {Name}: respawn wait = {waitSeconds}s");
     }
 
+    private void ApplyDeathPenalties()
+    {
+        LastDeathLostExp = 0;
+        LastDeathDurabilityLossRatio = 0;
+
+        var ratio = ItemManager.Instance.GetDeathDurabilityLossRatio();
+        var durMul = (int)CalculateWithBonuses(0, UnitAttribute.DeathDurabilityLossRatioMul);
+        LastDeathDurabilityLossRatio = (byte)Math.Clamp(
+            AttributeGainRules.ApplyPercentPoints(Math.Max(0, ratio), durMul), 0, byte.MaxValue);
+
+        if (Equipment != null)
+        {
+            foreach (var item in Equipment.Items)
+            {
+                if (item is not EquipItem gear || gear.MaxDurability == 0 || gear.Durability == 0)
+                    continue;
+                var loss = CharacterDeathRules.DurabilityLoss(gear.Durability, gear.MaxDurability, ratio, durMul);
+                if (loss <= 0)
+                    continue;
+                gear.Durability = (byte)Math.Max(0, gear.Durability - loss);
+                SendPacket(new SCItemDetailUpdatedPacket(gear));
+            }
+        }
+
+        var floor = ExperienceManager.Instance.GetExpForLevel(Level);
+        var intoLevel = Math.Max(0, Experience - floor);
+        var parameters = new Dictionary<string, double> { ["experience"] = intoLevel };
+        var penaltyFormula = FormulaManager.Instance.GetFormula((uint)FormulaKind.PenaltyExp);
+        var recoverFormula = FormulaManager.Instance.GetFormula((uint)FormulaKind.RecoverableExp);
+        var rawPenalty = penaltyFormula != null
+            ? (int)Math.Max(0, Math.Round(penaltyFormula.Evaluate(parameters)))
+            : 0;
+        var rawRecover = recoverFormula != null
+            ? (int)Math.Max(0, Math.Round(recoverFormula.Evaluate(parameters)))
+            : 0;
+        var lost = CharacterDeathRules.ClampLostExp(
+            Experience,
+            floor,
+            AttributeGainRules.ApplyPercentPoints(rawPenalty, (int)CalculateWithBonuses(0, UnitAttribute.PenaltyExpMul)));
+        var recoverable = AttributeGainRules.ApplyPercentPoints(
+            rawRecover,
+            (int)CalculateWithBonuses(0, UnitAttribute.RecoverableExpMul));
+
+        if (lost > 0)
+        {
+            Experience -= lost;
+            LastDeathLostExp = lost;
+            SendPacket(new SCExpChangedPacket(ObjId, -lost, false));
+        }
+
+        if (recoverable > 0)
+            RecoverableExp += recoverable;
+        if (lost > 0 || recoverable > 0)
+            SendPacket(new SCRecoverableExpPacket(ObjId, RecoverableExp, lost, 0));
+    }
+
+    private static int ApplyWarHonor(Character killer, int honor) =>
+        AttributeGainRules.ApplyGain(
+            honor,
+            (int)killer.CalculateWithBonuses(0, UnitAttribute.HonorPointGainWar),
+            (int)killer.CalculateWithBonuses(0, UnitAttribute.HonorPointGainWarMul));
+
     /// <summary>
     /// Awards PvP honor to the killer (and assists) based on zone conflict state.
     /// Conflict: 10 solo (6 killer + 4 each assist). War: 20 solo (16 killer + 4 each assist).
@@ -190,7 +258,7 @@ public partial class Character
 
         if (onlineAssists.Count > 0)
         {
-            var killerHonor = (int)Math.Round(killerShareHonor * pvpRate);
+            var killerHonor = ApplyWarHonor(killer, (int)Math.Round(killerShareHonor * pvpRate));
             if (killerHonor > 0)
             {
                 killer.ChangeGamePoints(GamePointKind.Honor, killerHonor);
@@ -203,16 +271,19 @@ public partial class Character
             {
                 foreach (var assistant in onlineAssists)
                 {
-                    assistant.ChangeGamePoints(GamePointKind.Honor, assistHonor);
-                    assistant.HonorGainedInCombat += (uint)assistHonor;
-                    Logger.Debug($"PvP Assist: {assistant.Name} assisted {killer.Name} killing {Name} — {assistHonor} honor");
+                    var granted = ApplyWarHonor(assistant, assistHonor);
+                    if (granted <= 0)
+                        continue;
+                    assistant.ChangeGamePoints(GamePointKind.Honor, granted);
+                    assistant.HonorGainedInCombat += (uint)granted;
+                    Logger.Debug($"PvP Assist: {assistant.Name} assisted {killer.Name} killing {Name} — {granted} honor");
                     assistant.BroadcastPacket(new SCUnitPvPPointsChangedPacket(assistant.ObjId, 0, (int)assistant.HonorGainedInCombat), true);
                 }
             }
         }
         else
         {
-            var honor = (int)Math.Round(soloHonor * pvpRate);
+            var honor = ApplyWarHonor(killer, (int)Math.Round(soloHonor * pvpRate));
             if (honor > 0)
             {
                 killer.ChangeGamePoints(GamePointKind.Honor, honor);

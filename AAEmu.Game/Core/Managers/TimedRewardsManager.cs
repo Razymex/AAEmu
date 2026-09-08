@@ -172,6 +172,8 @@ public class TimedRewardsManager(ITaskManager taskManager) : Singleton<TimedRewa
                 AccountManager.Instance.AddLoyalty(connection.AccountId, AppConfiguration.Instance.Loyalty.GetTickAmount(connection.Payment.PremiumState));
                 AccountManager.Instance.UpdateTickTimes(connection.AccountId, DateTime.UtcNow, false, false, true);
             }
+
+            ScheduleItemManager.Instance.TickOnline(connection);
         }
     }
 

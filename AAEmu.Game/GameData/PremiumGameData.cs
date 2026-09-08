@@ -57,6 +57,15 @@ public class PremiumGameData : Singleton<PremiumGameData>, IGameDataLoader
     public uint MaxGradeId => _grades.Count == 0 ? 0u : _grades.Max(g => g.GradeId);
 
     /// <summary>
+    /// Lowest paid row: the first grade that attaches a buff. Grade 1 is the free tier
+    /// (no buff, <c>max_labor</c> 0).
+    /// </summary>
+    public uint FirstPaidGradeId =>
+        _grades.Where(g => g.BuffId > 0).Select(g => g.GradeId).DefaultIfEmpty(0u).Min();
+
+    public int FirstPaidGradePoint => GetGrade(FirstPaidGradeId)?.Point ?? 0;
+
+    /// <summary>
     /// Every buff premium_grades attaches to a grade. Used to strip the buff of a grade a character no
     /// longer holds before granting the current one. The free tier carries none, hence the filter.
     /// </summary>

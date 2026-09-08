@@ -47,6 +47,28 @@ public class ContentConfigGameData : Singleton<ContentConfigGameData>, IGameData
 
     public bool TryGet(string name, out long value) => _values.TryGetValue(name, out value);
 
+    public bool TryGetInt(string name, out int value)
+    {
+        if (_values.TryGetValue(name, out var raw))
+        {
+            value = (int)raw;
+            return true;
+        }
+
+        value = 0;
+        return false;
+    }
+
+    /// <summary>Required row. Missing content must fail loudly, not fall back to a literal.</summary>
+    public int RequireInt(string name)
+    {
+        if (TryGetInt(name, out var value))
+            return value;
+        throw new InvalidOperationException($"Required content_configs row '{name}' is missing.");
+    }
+
+    public uint RequireUInt(string name) => (uint)RequireInt(name);
+
     /// <summary>The configured value, or <paramref name="fallback"/> when the row is absent.</summary>
     public long Get(string name, long fallback) => _values.TryGetValue(name, out var value) ? value : fallback;
 

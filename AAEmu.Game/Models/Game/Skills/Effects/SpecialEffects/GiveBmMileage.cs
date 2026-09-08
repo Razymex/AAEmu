@@ -1,6 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.Models.Game.Char;
+﻿using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -27,9 +26,6 @@ public class GiveBmMileage : SpecialEffectAction
         if (caster is not Character character)
             return;
 
-        AccountManager.Instance.AddLoyalty(character.AccountId, value1);
-        character.BmPoint = AccountManager.Instance.GetAccountDetails(character.AccountId).Loyalty;
-        // character.SendPacket(new SCMileageChangedPacket(character.ObjId, (int)character.BmPoint));
-        character.SendPacket(new SCBmPointPacket((int)character.BmPoint));
+        ItemWallet.CreditLoyalty(character, value1);
     }
 }

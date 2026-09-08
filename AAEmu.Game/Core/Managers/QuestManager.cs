@@ -41,6 +41,7 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     private readonly Dictionary<string, Dictionary<uint, QuestActTemplate>> _actTemplatesByDetailType = [];
     private readonly Dictionary<uint, List<uint>> _groupItems = [];
     private readonly Dictionary<uint, List<uint>> _groupNpcs = [];
+    private readonly Dictionary<uint, HashSet<uint>> _contextGroupMembers = [];
     private readonly Dictionary<uint, QuestComponentTemplate> _componentTemplates = [];
     public Dictionary<uint, Dictionary<uint, QuestTimeoutTask>> QuestTimeoutTask { get; } = [];
     private Queue<Quest> EvaluationQueue { get; } = new();
@@ -118,6 +119,14 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     public bool CheckGroupItem(uint groupId, uint itemId)
     {
         return _groupItems.GetValueOrDefault(groupId)?.Contains(itemId) ?? false;
+    }
+
+    /// <summary>
+    /// Checks whether a quest context belongs to a <c>quest_context_groups</c> entry.
+    /// </summary>
+    public bool CheckContextGroup(uint groupId, uint questId)
+    {
+        return _contextGroupMembers.TryGetValue(groupId, out var members) && members.Contains(questId);
     }
 
     /// <summary>
@@ -249,7 +258,9 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
             LoadBaseQuestActs(connection);
 
             LoadDetailQuestActTemplates(connection);
+            AttachUnimplementedProgressActs();
             LoadQuestItemGroups(connection);
+            LoadQuestContextGroups(connection);
             LoadQuestMonsterNpcs(connection);
 
             UpdateQuestComponentActs();
@@ -375,6 +386,59 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
 
             items.Add(itemId);
         }
+    }
+
+    /// <summary>
+    /// Load quest_context_group_members for CompleteQuestGroup Progress acts.
+    /// </summary>
+    private void LoadQuestContextGroups(SqliteConnection connection)
+    {
+        _contextGroupMembers.Clear();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT quest_context_group_id, context_id FROM quest_context_group_members";
+        command.Prepare();
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        while (reader.Read())
+        {
+            var groupId = reader.GetUInt32("quest_context_group_id");
+            var questId = reader.GetUInt32("context_id");
+            if (!_contextGroupMembers.TryGetValue(groupId, out var members))
+            {
+                members = [];
+                _contextGroupMembers[groupId] = members;
+            }
+
+            members.Add(questId);
+        }
+    }
+
+    /// <summary>
+    /// Progress acts with no handler used to leave the component empty, so Accept walked
+    /// Start → Reward. Keep an objective slot open until a real handler is loaded.
+    /// </summary>
+    private void AttachUnimplementedProgressActs()
+    {
+        var held = 0;
+        foreach (var (componentId, baseActs) in _actsByComponent)
+        {
+            if (!_componentTemplates.TryGetValue(componentId, out var component))
+                continue;
+            if (component.KindId != QuestComponentKind.Progress)
+                continue;
+
+            var loaded = component.ActTemplates.Select(act => act.ActId).ToHashSet();
+            foreach (var baseAct in baseActs)
+            {
+                if (loaded.Contains(baseAct.ActId))
+                    continue;
+                QuestProgressActRules.HoldUntilImplemented(baseAct);
+                component.ActTemplates.Add(baseAct);
+                held++;
+            }
+        }
+
+        if (held > 0)
+            Logger.Info("Held {0} Progress acts open until their handlers exist", held);
     }
 
     /// <summary>
@@ -1093,6 +1157,209 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
                         DetailId = actId, QuestId = reader.GetUInt32("quest_id"), AcceptWith = reader.GetBoolean("accept_with", true),
                         UseAlias = reader.GetBoolean("use_alias", true),
                         QuestActObjAliasId = reader.GetUInt32("quest_act_obj_alias_id", 0)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_complete_quest_groups";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjCompleteQuestGroup", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjCompleteQuestGroup(parentComponent)
+                    {
+                        DetailId = actId,
+                        QuestContextGroupId = reader.GetUInt32("quest_context_group_id", 0),
+                        AcceptWith = reader.GetBoolean("accept_with", true),
+                        Count = reader.GetInt32("count", 0),
+                        UseAlias = reader.GetBoolean("use_alias", true),
+                        QuestActObjAliasId = reader.GetUInt32("quest_act_obj_alias_id", 0)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_consume_evolving_materials";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjConsumeEvolvingMaterial", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjConsumeEvolvingMaterial(parentComponent)
+                    {
+                        DetailId = actId,
+                        Count = reader.GetInt32("count", 0),
+                        UseAlias = reader.GetBoolean("use_alias", true),
+                        QuestActObjAliasId = reader.GetUInt32("quest_act_obj_alias_id", 0)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_enchant_scale_counts";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjEnchantScaleCount", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjEnchantScaleCount(parentComponent)
+                    {
+                        DetailId = actId,
+                        Count = reader.GetInt32("count", 0),
+                        UseAlias = reader.GetBoolean("use_alias", true),
+                        QuestActObjAliasId = reader.GetUInt32("quest_act_obj_alias_id", 0)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_gain_exp_points";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjGainExpPoint", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjGainExpPoint(parentComponent)
+                    {
+                        DetailId = actId,
+                        Count = reader.GetInt32("point", 0)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_gain_honor_points";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjGainHonorPoint", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjGainHonorPoint(parentComponent)
+                    {
+                        DetailId = actId,
+                        Count = reader.GetInt32("point", 0)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_gain_living_points";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjGainLivingPoint", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjGainLivingPoint(parentComponent)
+                    {
+                        DetailId = actId,
+                        Count = reader.GetInt32("point", 0)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_npc_kills";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjNpcKill", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjNpcKill(parentComponent)
+                    {
+                        DetailId = actId,
+                        LevelMin = reader.GetInt32("level_min", 0),
+                        LevelMax = reader.GetInt32("level_max", 0),
+                        HeirLevelMin = reader.GetInt32("heir_level_min", 0),
+                        HeirLevelMax = reader.GetInt32("heir_level_max", 0),
+                        GradeNormal = reader.GetBoolean("grade_normal", true),
+                        GradeStrong = reader.GetBoolean("grade_strong", true),
+                        GradeElite = reader.GetBoolean("grade_elite", true),
+                        GradeBossA = reader.GetBoolean("grade_boss_a", true),
+                        GradeBossB = reader.GetBoolean("grade_boss_b", true),
+                        GradeBossC = reader.GetBoolean("grade_boss_c", true),
+                        Count = reader.GetInt32("count", 0),
+                        UseAlias = reader.GetBoolean("use_alias", true),
+                        QuestActObjAliasId = reader.GetUInt32("quest_act_obj_alias_id", 0),
+                        TeamShare = reader.GetBoolean("team_share", true),
+                        IsParty = reader.GetBoolean("is_party", true)
+                    };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_obj_pc_kills";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActObjPcKill", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActObjPcKill(parentComponent)
+                    {
+                        DetailId = actId,
+                        LevelGap = reader.GetInt32("level_gap", 0),
+                        Count = reader.GetInt32("count", 0),
+                        UseAlias = reader.GetBoolean("use_alias", true),
+                        QuestActObjAliasId = reader.GetUInt32("quest_act_obj_alias_id", 0),
+                        TeamShare = reader.GetBoolean("team_share", true),
+                        IsParty = reader.GetBoolean("is_party", true)
                     };
                     AddActTemplate(template);
                 }
@@ -1958,6 +2225,27 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
                     if (parentComponent == null)
                         continue;
                     var template = new QuestActSupplySkill(parentComponent) { DetailId = actId, SkillId = reader.GetUInt32("skill_id") };
+                    AddActTemplate(template);
+                }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM quest_act_supply_arche_pass_points";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                {
+                    var actId = reader.GetUInt32("id");
+                    var parentComponent = GetComponentByActTemplate("QuestActSupplyArchePassPoint", actId);
+                    if (parentComponent == null)
+                        continue;
+                    var template = new QuestActSupplyArchePassPoint(parentComponent)
+                    {
+                        DetailId = actId, Point = reader.GetInt32("point")
+                    };
                     AddActTemplate(template);
                 }
             }

@@ -1,4 +1,5 @@
 using AAEmu.Commons.Exceptions;
+using AAEmu.Game.Models.Game;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.World;
@@ -21,7 +22,18 @@ public class ItemContainer
     private int _freeSlotCount;
     private ICharacter _owner;
     private uint _ownerId;
-    public bool IsDirty { get; set; }
+    private readonly LiveDirtyGate _dirty = new();
+    public int DirtyStamp => _dirty.Stamp;
+
+    public bool IsDirty
+    {
+        get => _dirty.IsDirty;
+        set => _dirty.IsDirty = value;
+    }
+
+    public bool TryCaptureDirtyStamp(out int stamp) => _dirty.TryCapture(out stamp);
+
+    public bool TryClearDirty(int writtenStamp) => _dirty.TryClear(writtenStamp);
     private readonly SlotType _containerType;
     private ulong _containerId;
 
@@ -601,9 +613,9 @@ public class ItemContainer
     /// <param name="crafterId"></param>
     /// <returns></returns>
     public bool AcquireDefaultItem(ItemTaskType taskType, uint templateId, int amountToAdd, int gradeToAdd = -1,
-        uint crafterId = 0)
+        uint crafterId = 0, bool convertWallet = true)
     {
-        return AcquireDefaultItemEx(taskType, templateId, amountToAdd, gradeToAdd, out _, out _, crafterId);
+        return AcquireDefaultItemEx(taskType, templateId, amountToAdd, gradeToAdd, out _, out _, crafterId, convertWallet: convertWallet);
     }
 
     /// <summary>
@@ -618,7 +630,7 @@ public class ItemContainer
     /// <param name="crafterId"></param>
     /// <param name="preferredSlot"></param>
     /// <returns></returns>
-    public bool AcquireDefaultItemEx(ItemTaskType taskType, uint templateId, int amountToAdd, int gradeToAdd, out List<Item> newItemsList, out List<Item> updatedItemsList, uint crafterId, int preferredSlot = -1)
+    public bool AcquireDefaultItemEx(ItemTaskType taskType, uint templateId, int amountToAdd, int gradeToAdd, out List<Item> newItemsList, out List<Item> updatedItemsList, uint crafterId, int preferredSlot = -1, bool convertWallet = true)
     {
         newItemsList = [];
         updatedItemsList = [];
@@ -627,6 +639,10 @@ public class ItemContainer
             return true;
         }
 
+        if (ItemWalletRules.ShouldCreditOnAcquire(templateId, ContainerType, convertWallet) && Owner is Character walletOwner)
+            return ItemWallet.CreditLoyalty(walletOwner, amountToAdd);
+
+        using var suppressWallet = convertWallet ? null : ItemWalletRules.SuppressAcquireConvert();
         GetAllItemsByTemplate(templateId, gradeToAdd, out var currentItems, out var currentTotalItemCount);
         var template = ItemManager.Instance.GetTemplate(templateId);
         if (template == null)
@@ -778,6 +794,9 @@ public class ItemContainer
         {
             return 0; // Invalid item templateId
         }
+
+        if (ItemWalletRules.CreditOnAcquire(templateId, ContainerType))
+            return int.MaxValue;
 
         // Special handling for money
         if (templateId == Item.Coins)

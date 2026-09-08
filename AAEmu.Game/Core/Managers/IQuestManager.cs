@@ -8,6 +8,7 @@ public interface IQuestManager : ILoadable
 {
     void FailQuest(ICharacter owner, uint questId);
     bool CheckGroupItem(uint groupId, uint itemId);
+    bool CheckContextGroup(uint groupId, uint questId);
     bool CheckGroupNpc(uint groupId, uint npcId);
     List<QuestActTemplate> GetActsInComponent(uint id);
     QuestActTemplate GetActTemplate(uint id, string type);

@@ -3,13 +3,7 @@ using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
-/// <summary>
-/// TODO: the body is parsed but nothing acts on it yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
+/// <summary>Roll a Bless Uthstin apply. The item is spent only on a later confirm.</summary>
 public class CSBlessUthstinConsumeApplyStatsPacket() : GamePacket(CSOffsets.CSBlessUthstinConsumeApplyStatsPacket, 1)
 {
     public long Item { get; private set; }
@@ -19,5 +13,6 @@ public class CSBlessUthstinConsumeApplyStatsPacket() : GamePacket(CSOffsets.CSBl
     {
         Item = stream.ReadInt64();
         PageIndex = stream.ReadInt32();
+        Connection.ActiveChar?.BlessUthstin?.TryConsumeApply((ulong)Item, PageIndex);
     }
 }

@@ -1,25 +1,24 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Core.Packets.G2C;
 
-/// <summary>
-/// TODO: nothing constructs this packet yet.
-/// </summary>
-/// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
-/// </remarks>
-public class SCBlessUthstinCopyPagePacket(uint bc, bool bResult, int copyPageIndex, uint stats, int applyNormalCount, int applySpecialCount) : GamePacket(SCOffsets.SCBlessUthstinCopyPagePacket, 1)
+/// <summary>Bless Uthstin page copy result. Destination index is 0-based.</summary>
+public class SCBlessUthstinCopyPagePacket(
+    uint bc,
+    bool bResult,
+    int copyPageIndex,
+    BlessUthstinPage page) : GamePacket(SCOffsets.SCBlessUthstinCopyPagePacket, 1)
 {
     public override PacketStream Write(PacketStream stream)
     {
         stream.WriteBc(bc);
         stream.Write(bResult);
         stream.Write(copyPageIndex);
-        stream.Write(stats);
-        stream.Write(applyNormalCount);
-        stream.Write(applySpecialCount);
+        BlessUthstinRules.WriteAppliedStats(stream, page);
+        stream.Write(page?.ApplyNormalCount ?? 0);
+        stream.Write(page?.ApplySpecialCount ?? 0);
         return stream;
     }
 }

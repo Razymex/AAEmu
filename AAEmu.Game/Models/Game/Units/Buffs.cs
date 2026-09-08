@@ -358,6 +358,8 @@ public class Buffs : IBuffs
             }
 
             buff.Duration = buff.Template.GetDuration(buff.AbLevel);
+            if (forcedDuration != 0)
+                buff.Duration = forcedDuration;
             if (buff.Caster != null)
             {
                 buff.Duration = (int)buff.Caster.BuffModifiersCache.ApplyModifiers(buff.Template, BuffAttribute.Duration, buff.Duration);
@@ -372,9 +374,6 @@ public class Buffs : IBuffs
                 if (buff.Caster is Character && buff.Owner is Character)
                     buff.Duration = (int)(buff.Duration * ((100 - buffTolerance.CharacterTimeReduction) / 100.0));
             }
-
-            if (forcedDuration != 0)
-                buff.Duration = forcedDuration;
 
             if (buff.Duration > 0 && buff.StartTime == DateTime.MinValue)
             {

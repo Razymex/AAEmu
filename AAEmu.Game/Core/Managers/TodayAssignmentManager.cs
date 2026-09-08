@@ -272,6 +272,81 @@ public class TodayAssignmentManager : Singleton<TodayAssignmentManager>
             newUsed, MaxDailyResets);
     }
 
+    /// <summary>
+    /// Re-roll an in-progress step without spending the personal daily reset counter.
+    /// Arche Pass weekly change-count is owned by <see cref="CharacterArchePass"/>.
+    /// </summary>
+    public bool TryRerollProgress(Character character, uint realStep, bool requireArchePassBoard)
+    {
+        if (character == null || realStep == 0)
+            return false;
+
+        EnsureLoaded(character);
+
+        var step = TodayQuestGameData.Instance.GetStepByRealStep(realStep);
+        if (step == null)
+        {
+            Logger.Warn("TodayAssignment: reroll unknown realStep={0} for {1}", realStep, character.Name);
+            return false;
+        }
+
+        if (requireArchePassBoard && !step.IsArchePassBoard)
+        {
+            Logger.Info("TodayAssignment: reroll refused (not Arche Pass board) realStep={0} for {1}",
+                realStep, character.Name);
+            return false;
+        }
+
+        if (!TryGetActive(character.Id, realStep, out var state)
+            || !state.Accepted
+            || state.Status != TodayAssignmentStatus.Progress)
+        {
+            Logger.Info(
+                "TodayAssignment: reroll refused (not in Progress) realStep={0} for {1}",
+                realStep, character.Name);
+            return false;
+        }
+
+        var oldGroupId = state.GroupId;
+        var oldQuestId = state.QuestContextId;
+
+        if (!TryPickReplacement(character, step, oldGroupId, oldQuestId, out var newGroup, out var newQuestId))
+        {
+            Logger.Warn(
+                "TodayAssignment: reroll no alternate quest realStep={0} for {1} (group={2} quest={3})",
+                realStep, character.Name, oldGroupId, oldQuestId);
+            return false;
+        }
+
+        DropSiblingQuests(character, oldGroupId, keepQuestId: 0);
+        if (newGroup.Id != oldGroupId)
+            DropSiblingQuests(character, newGroup.Id, keepQuestId: 0);
+
+        if (!character.Quests.AddQuest(newQuestId))
+        {
+            Logger.Warn(
+                "TodayAssignment: reroll failed to start quest={0} realStep={1} for {2}",
+                newQuestId, realStep, character.Name);
+            if (oldQuestId != 0 && !character.Quests.HasQuestCompleted(oldQuestId))
+                character.Quests.AddQuest(oldQuestId);
+            return false;
+        }
+
+        state.GroupId = newGroup.Id;
+        state.QuestContextId = newQuestId;
+        state.Unlocked = true;
+        state.Accepted = true;
+        state.Status = TodayAssignmentStatus.Progress;
+        SetActive(character.Id, realStep, state);
+        Persist(character.Id, realStep, state);
+        SendState(character, realStep, state, init: false);
+
+        Logger.Info(
+            "TodayAssignment reroll ok {0}: realStep={1} group {2}→{3} quest {4}→{5}",
+            character.Name, realStep, oldGroupId, newGroup.Id, oldQuestId, newQuestId);
+        return true;
+    }
+
     public void HandleAcceptAll(Character character, sbyte todayType, IReadOnlyList<uint> realSteps)
     {
         if (character == null)
@@ -427,6 +502,8 @@ public class TodayAssignmentManager : Singleton<TodayAssignmentManager>
         var step = TodayQuestGameData.Instance.GetStepByRealStep(realStep);
         if (step is { IsHeroBoard: true })
             HeroManager.Instance.OnHeroBoardQuestCompleted(character, step.Id);
+        if (step is { IsArchePassBoard: true })
+            character.ArchePass?.NotifyMissionCompleted();
     }
 
     private void Unlock(Character character, TodayQuestStepTemplate step, uint realStep)

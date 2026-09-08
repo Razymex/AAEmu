@@ -1,7 +1,5 @@
-﻿using AAEmu.Game.Core.Managers;
-using AAEmu.Game.Core.Packets.G2C;
-using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.Items.Actions;
+﻿using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
@@ -27,24 +25,11 @@ public class GiveCashPoint : SpecialEffectAction
 
         if (caster is Character character)
         {
-            //skillObject.
-            //character.Equipment.RemoveItem(ItemTaskType.ConsumeSkillSource, casterObj.
-            if (casterObj is SkillItem skillItem)
+            if (casterObj is SkillItem skillItem &&
+                character.Inventory?.Bag != null &&
+                ItemWallet.ConsumeThenCreditCredits(character, character.Inventory.Bag, skillItem.ItemTemplateId, 1, value1))
             {
-                if (character.Inventory.Bag.ConsumeItem(ItemTaskType.ConsumeSkillSource, skillItem.ItemTemplateId, 1, null) > 0)
-                {
-                    if (!AccountManager.Instance.AddCredits(character.AccountId, value1))
-                    {
-                        Logger.Error($"Failed to credit Account:{character.AccountId} with {value1} credits.");
-                    }
-                    else
-                    {
-                        // TODO: Proper message?
-                        character.SendMessage($"You received {value1} credits.");
-                    }
-                }
-                var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
-                character.SendPacket(new SCICSCashPointPacket(points.Credits));
+                character.SendMessage($"You received {value1} credits.");
             }
         }
     }

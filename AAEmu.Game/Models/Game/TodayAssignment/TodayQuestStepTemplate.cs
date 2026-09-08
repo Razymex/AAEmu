@@ -19,5 +19,10 @@ public class TodayQuestStepTemplate
     /// <summary>The Hero board: only seated heroes see it, and level_min/level_max are hero grades.</summary>
     public const int HeroBoardSortId = 4;
 
+    /// <summary>Arche Pass mission board (<c>enum_today_quest_sorts.arche_pass</c>).</summary>
+    public const int ArchePassBoardSortId = 5;
+
     public bool IsHeroBoard => SortId == HeroBoardSortId;
+
+    public bool IsArchePassBoard => SortId == ArchePassBoardSortId;
 }

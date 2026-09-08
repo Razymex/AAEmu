@@ -192,6 +192,24 @@ public enum ItemTaskType : byte
     /// </summary>
     Teleport = 151,
 
+    BlessUthstinInitStats = 153,
+    BlessUthstinChangeStats = 154,
+    BlessUthstinExpandMaxStats = 155,
+    BlessUthstinExpandPage = 156,
+    BlessUthstinSelectPage = 157,
+    BlessUthstinCopyPage = 158,
+
+    /// <summary>
+    /// Paying an Arche Pass register cost. Empty client slot — gold just needs a task byte.
+    /// </summary>
+    ArchePassBuy = 159,
+
+    /// <summary>Spending the catalog upgrade item on an in-progress pass.</summary>
+    ArchePassUpgrade = 160,
+
+    /// <summary>Granting a claimed free or premium tier reward.</summary>
+    ArchePassReward = 161,
+
     RestoreDisableEnchant = 171,
     ItemTypeChange = 176,
     ItemElement = 185

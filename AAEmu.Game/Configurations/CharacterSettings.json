@@ -4,7 +4,9 @@
 		"AccessLevelFirstAccount": 100,
 		"AccessLevelFirstCharacter": 100,
 		"DeleteReleaseName": true,
-		// true grants every character the top premium_grades grade instead of deriving it from characters.point
+		// Stacked Patron (1001+1002) for every account. Not sold in the premium shop.
+		"GrantStackedPatron": true,
+		// true pins the point grade to the top premium_grades row instead of the first paid floor
 		"ForceMaxPremiumGrade": false,
 		"DeleteTimings": [
 			{

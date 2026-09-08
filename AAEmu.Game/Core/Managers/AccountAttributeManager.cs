@@ -23,10 +23,13 @@ public class AccountAttribute
     /// <summary>When the current grant period began.</summary>
     public DateTime Starts { get; set; }
 
-    /// <summary>When the entry lapses; DateTime.MaxValue for a permanent one.</summary>
+    /// <summary>
+    /// When the entry lapses. <see cref="DateTime.UnixEpoch"/> and <see cref="DateTime.MaxValue"/>
+    /// are both permanent; only a real future/past window can lapse.
+    /// </summary>
     public DateTime Expires { get; set; }
 
-    public bool IsExpired => Expires <= DateTime.UtcNow;
+    public bool IsExpired => Expires > DateTime.UnixEpoch && Expires <= DateTime.UtcNow;
 }
 
 /// <summary>

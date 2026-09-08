@@ -1,4 +1,5 @@
 ﻿using AAEmu.Commons.Network;
+using AAEmu.Game.Models.Game.Char;
 
 namespace AAEmu.Game.Core.Packets.G2C.UnitState;
 
@@ -41,10 +42,7 @@ internal static class UnitStateCharacterSerializer
         character.VisualOptions.WriteOptions(stream);
         stream.Write(character.PremiumGrade);
 
-        stream.Write(0);  // _pageInfos count (i32)
-        stream.Write(0);  // _selectPageIndex (i32)
-        stream.Write(0);  // _extendMaxStats (i32)
-        stream.Write(0);  // _applyExtendCount (i32)
+        (character.BlessUthstin ?? new CharacterBlessUthstin()).WritePageInfos(stream);
         stream.Write(0u); // equipSlotReinforces.slotInfoList count (u32)
         stream.Write(0u); // equipSlotReinforces.levelEffectList count (u32)
     }

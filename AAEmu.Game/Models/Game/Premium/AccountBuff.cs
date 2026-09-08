@@ -18,6 +18,12 @@ public class AccountBuff
     public string Name { get; set; }
     public uint BuffId { get; set; }
 
+    /// <summary>
+    /// When true this membership uses <c>content_configs</c> auction charge/deposit cuts.
+    /// Compact sets it on 生活会员 (1002) only.
+    /// </summary>
+    public bool UseAuctionConfig { get; set; }
+
     /// <summary>Added to (or, with <see cref="ReplacePremiumOnlineLp"/>, substituted for) the grade's online rate.</summary>
     public int OnlineLaborPower { get; set; }
     public bool ReplacePremiumOnlineLp { get; set; }
