@@ -210,6 +210,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             }
         };
 
+        var staged = new List<Item>();
         foreach (var grant in items)
         {
             if (!character.Inventory.MailAttachments.AcquireDefaultItemEx(
@@ -220,13 +221,24 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                     out var added,
                     out _,
                     character.Id))
+            {
+                if (!MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, staged))
+                    deliveredAny = true;
                 return false;
-            deliveredAny = true;
-            mail.Body.Attachments.AddRange(added);
+            }
+
+            staged.AddRange(added);
         }
 
+        mail.Body.Attachments.AddRange(staged);
         if (!mail.Send())
+        {
+            if (!MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, staged))
+                deliveredAny = true;
             return false;
+        }
+
+        deliveredAny = true;
         byMail = true;
         return true;
     }

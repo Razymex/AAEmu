@@ -288,10 +288,15 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
                 character.Id))
             return false;
 
-        deliveredAny = true;
         mail.Body.Attachments.AddRange(added);
         if (!mail.Send())
+        {
+            if (!MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, added))
+                deliveredAny = true;
             return false;
+        }
+
+        deliveredAny = true;
         byMail = true;
         return true;
     }

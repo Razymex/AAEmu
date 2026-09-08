@@ -48,6 +48,14 @@ public class MailDeliveryRulesTests
     }
 
     [Test]
+    public async Task TryDiscardStagedAttachments_NullContainerIsCleanOnlyWhenNothingWasStaged()
+    {
+        await Assert.That(MailDeliveryRules.TryDiscardStagedAttachments(null, null)).IsTrue();
+        await Assert.That(MailDeliveryRules.TryDiscardStagedAttachments(null, [])).IsTrue();
+        await Assert.That(MailDeliveryRules.TryDiscardStagedAttachments(null, [new Item(1) { Id = 2 }])).IsFalse();
+    }
+
+    [Test]
     public async Task HoldAttachmentsFromWorldSave_KeepsItemsOffThePeriodicSave()
     {
         var mail = new BaseMail();
