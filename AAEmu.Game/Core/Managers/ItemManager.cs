@@ -91,6 +91,9 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
 
     private Dictionary<ulong, Item> _allItems;
     private List<ulong> _removedItems;
+    [ThreadStatic] private static List<Item> t_writtenItems;
+    [ThreadStatic] private static List<ItemContainer> t_writtenContainers;
+    [ThreadStatic] private static List<ulong> t_removedWritten;
     private Dictionary<ulong, ItemContainer> _allPersistentContainers;
     private Dictionary<ulong, ItemBagContainer> _itemBagContainers;
     private bool _loadedUserItems;
@@ -1717,7 +1720,8 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                             "Deleted {0}/{1} queued item rows; {2} IDs were already absent",
                             deleteCount, _removedItems.Count, _removedItems.Count - deleteCount);
                     }
-                    _removedItems.Clear();
+
+                    t_removedWritten = [.. _removedItems];
                 }
             }
             // Update items
@@ -1763,7 +1767,10 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         var res = command.ExecuteNonQuery();
                         containerUpdateCount += res;
                         if (res > 0)
-                            c.IsDirty = false;
+                        {
+                            t_writtenContainers ??= [];
+                            t_writtenContainers.Add(c);
+                        }
                     }
                     catch (Exception e)
                     {
@@ -1862,7 +1869,8 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
                         }
                         else
                         {
-                            item.IsDirty = false;
+                            t_writtenItems ??= [];
+                            t_writtenItems.Add(item);
                             updateCount++;
                         }
                     }
@@ -1879,6 +1887,41 @@ public class ItemManager(ISkillManager skillManager, IItemIdManager itemIdManage
         }
 
         return (updateCount, deleteCount, containerUpdateCount);
+    }
+
+    public void ConfirmSaved()
+    {
+        if (t_writtenItems != null)
+        {
+            foreach (var item in t_writtenItems)
+                item.IsDirty = false;
+        }
+
+        if (t_writtenContainers != null)
+        {
+            foreach (var container in t_writtenContainers)
+                container.IsDirty = false;
+        }
+
+        if (t_removedWritten != null)
+        {
+            lock (_removedItems)
+            {
+                foreach (var id in t_removedWritten)
+                    _removedItems.Remove(id);
+            }
+        }
+
+        t_writtenItems = null;
+        t_writtenContainers = null;
+        t_removedWritten = null;
+    }
+
+    public void DiscardPendingClears()
+    {
+        t_writtenItems = null;
+        t_writtenContainers = null;
+        t_removedWritten = null;
     }
 
     /// <summary>

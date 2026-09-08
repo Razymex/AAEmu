@@ -5,6 +5,7 @@ using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.GameData;
 using AAEmu.Game.Models;
 using AAEmu.Game.Models.Account;
+using MySql.Data.MySqlClient;
 
 using NLog;
 
@@ -228,6 +229,46 @@ public class AccountManager(ITickManager tickManager, ITimedRewardsManager timed
             {
                 using var connection = MySQL.CreateConnection();
                 using var command = connection.CreateCommand();
+                command.CommandText = "INSERT INTO accounts (account_id, credits) VALUES(@acc_id, @credits_amount) ON DUPLICATE KEY UPDATE credits = credits + @credits_amount";
+                command.Parameters.AddWithValue("@acc_id", accountId);
+                command.Parameters.AddWithValue("@credits_amount", creditsAmount);
+                command.Prepare();
+                return command.ExecuteNonQuery() > 0;
+            }
+            catch (Exception e)
+            {
+                Logger.Error($"{e.Message}\n{e.StackTrace}");
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Same write as <see cref="AddCredits"/> on the caller's transaction so a claim and
+    /// its cash reward commit or roll back together.
+    /// </summary>
+    public bool AddCreditsOn(uint accountId, int creditsAmount, MySqlConnection connection, MySqlTransaction transaction)
+    {
+        if (connection == null || transaction == null || creditsAmount == 0)
+            return creditsAmount == 0;
+
+        object accLock;
+        lock (_locks)
+        {
+            if (!_locks.TryGetValue(accountId, out accLock))
+            {
+                accLock = new object();
+                _locks.Add(accountId, accLock);
+            }
+        }
+
+        lock (accLock)
+        {
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.Connection = connection;
+                command.Transaction = transaction;
                 command.CommandText = "INSERT INTO accounts (account_id, credits) VALUES(@acc_id, @credits_amount) ON DUPLICATE KEY UPDATE credits = credits + @credits_amount";
                 command.Parameters.AddWithValue("@acc_id", accountId);
                 command.Parameters.AddWithValue("@credits_amount", creditsAmount);

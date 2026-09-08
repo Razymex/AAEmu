@@ -22,8 +22,10 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
 
     private readonly ConcurrentDictionary<(uint AccountId, int Year, int Month), Dictionary<int, Claim>> _months = [];
     private readonly ConcurrentDictionary<(uint AccountId, int Year, int Month), int> _dirtyMonths = [];
+    private readonly ConcurrentDictionary<uint, int> _pendingCredits = [];
     private int _dirtyStamp;
     [ThreadStatic] private static List<((uint AccountId, int Year, int Month) Key, int Stamp)> t_written;
+    [ThreadStatic] private static List<(uint AccountId, int Amount)> t_writtenCredits;
 
     private sealed class Claim
     {
@@ -112,7 +114,7 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
                 return;
             }
 
-            if (!TryCreditPacks(character, cashPacks, delivery))
+            if (!QueueCredits(character.AccountId, cashPacks, delivery))
             {
                 UndoDelivery(character, delivery);
                 claims.Remove(day.Day);
@@ -131,6 +133,12 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
             character.SendPacket(new SCAccountAttendanceAddedPacket(false, 0, false));
             SendMonth(character);
             return;
+        }
+
+        if (delivery.CashCredits > 0)
+        {
+            var points = AccountManager.Instance.GetAccountDetails(character.AccountId);
+            character.SendPacket(new SCICSCashPointPacket(points.Credits));
         }
 
         character.SendPacket(new SCAccountAttendanceAddedPacket(true, unix, isArchelife));
@@ -250,53 +258,49 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
         return true;
     }
 
-    private static bool TryCreditPacks(
-        Character character,
+    private bool QueueCredits(
+        uint accountId,
         IReadOnlyList<AccountAttendanceReward> cashPacks,
         Delivery delivery)
     {
+        var total = 0;
         foreach (var pack in cashPacks)
         {
             var template = ItemManager.Instance.GetTemplate(pack.ItemId);
             var add = ItemWalletRules.CreditsFromEffect(
                 ItemWallet.CreditsOnTemplate(template),
                 pack.ItemCount);
-            if (add <= 0 || !ItemWallet.TryCreditCashPack(character, pack.ItemId, pack.ItemCount))
-            {
-                if (delivery.CashCredits > 0 &&
-                    !ItemWallet.TryRefundCredits(character, delivery.CashCredits))
-                {
-                    Logger.Error(
-                        "Account attendance cash credit failed and the refund did not land for {0}",
-                        character.Name);
-                }
-
-                delivery.CashCredits = 0;
+            if (add <= 0)
                 return false;
-            }
-
-            delivery.CashCredits += add;
+            total += add;
         }
 
+        delivery.CashCredits = total;
+        if (total > 0)
+            _pendingCredits.AddOrUpdate(accountId, total, (_, current) => current + total);
         return true;
     }
 
-    private static void UndoDelivery(Character character, Delivery delivery)
+    private void UndoDelivery(Character character, Delivery delivery)
     {
         UndoBag(character, delivery);
         if (delivery.Mail != null)
             MailManager.Instance.DiscardUnpersisted(delivery.Mail);
-        if (delivery.CashCredits > 0 &&
-            !ItemWallet.TryRefundCredits(character, delivery.CashCredits))
-        {
-            Logger.Error(
-                "Account attendance persist failed and the cash refund did not land for {0}",
-                character.Name);
-        }
+        if (delivery.CashCredits > 0)
+            ClearQueuedCredits(character.AccountId, delivery.CashCredits);
 
         delivery.CashCredits = 0;
         delivery.Mail = null;
         delivery.ByMail = false;
+    }
+
+    private void ClearQueuedCredits(uint accountId, int amount)
+    {
+        if (amount <= 0)
+            return;
+        _pendingCredits.AddOrUpdate(accountId, 0, (_, current) => Math.Max(0, current - amount));
+        if (_pendingCredits.TryGetValue(accountId, out var left) && left <= 0)
+            _pendingCredits.TryRemove(accountId, out _);
     }
 
     private static void UndoBag(Character character, Delivery delivery)
@@ -359,15 +363,32 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
 
     public void ConfirmSaved()
     {
-        if (t_written == null)
-            return;
-        foreach (var (key, stamp) in t_written)
-            AccountLiveDirty.ClearIfUnchanged(_dirtyMonths, key, stamp);
+        if (t_written != null)
+        {
+            foreach (var (key, stamp) in t_written)
+                AccountLiveDirty.ClearIfUnchanged(_dirtyMonths, key, stamp);
+        }
+
+        if (t_writtenCredits != null)
+        {
+            foreach (var (accountId, amount) in t_writtenCredits)
+            {
+                if (_pendingCredits.TryGetValue(accountId, out var current) && current == amount)
+                    _pendingCredits.TryRemove(accountId, out _);
+                else if (current != 0)
+                    _pendingCredits[accountId] = Math.Max(0, current - amount);
+            }
+        }
 
         t_written = null;
+        t_writtenCredits = null;
     }
 
-    public void DiscardPendingClears() => t_written = null;
+    public void DiscardPendingClears()
+    {
+        t_written = null;
+        t_writtenCredits = null;
+    }
 
     public void SaveForAccount(uint accountId, MySqlConnection connection, MySqlTransaction transaction)
     {
@@ -420,6 +441,15 @@ public class AccountAttendanceManager : Singleton<AccountAttendanceManager>
 
             t_written ??= [];
             t_written.Add((key, stamp));
+        }
+
+        if (_pendingCredits.TryGetValue(accountId, out var credits) && credits > 0)
+        {
+            if (!AccountManager.Instance.AddCreditsOn(accountId, credits, connection, transaction))
+                throw new InvalidOperationException("Account attendance credits were not written with the claim");
+
+            t_writtenCredits ??= [];
+            t_writtenCredits.Add((accountId, credits));
         }
     }
 }

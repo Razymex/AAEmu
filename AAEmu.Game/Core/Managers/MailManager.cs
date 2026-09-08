@@ -26,6 +26,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
     public Dictionary<long, BaseMail> AllPlayerMails => _allPlayerMails;
     private readonly Dictionary<long, BaseMail> _pendingMails = [];
     private List<long> _deletedMailIds = [];
+    [ThreadStatic] private static List<BaseMail> t_writtenMails;
+    [ThreadStatic] private static List<long> t_deletedWritten;
     // Unused: private object _lock = new();
 
     public static int CostNormal { get; set; } = 50;
@@ -469,7 +471,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
                     command.Prepare();
                     command.ExecuteNonQuery();
                 }
-                _deletedMailIds.Clear();
+
+                t_deletedWritten = [.. _deletedMailIds];
             }
         }
 
@@ -478,6 +481,8 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
             if (!mtbs.Value.IsDirty || !MailDeliveryRules.IsPublished(mtbs.Value))
                 continue;
             WriteMail(mtbs.Value, connection, transaction);
+            t_writtenMails ??= [];
+            t_writtenMails.Add(mtbs.Value);
             updatedCount++;
         }
 
@@ -532,7 +537,33 @@ public class MailManager(IMailIdManager mailIdManager, INameManager nameManager,
 
         command.Prepare();
         command.ExecuteNonQuery();
-        mail.IsDirty = false;
+    }
+
+    public void ConfirmSaved()
+    {
+        if (t_writtenMails != null)
+        {
+            foreach (var mail in t_writtenMails)
+                mail.IsDirty = false;
+        }
+
+        if (t_deletedWritten != null)
+        {
+            lock (_deletedMailIds)
+            {
+                foreach (var id in t_deletedWritten)
+                    _deletedMailIds.Remove(id);
+            }
+        }
+
+        t_writtenMails = null;
+        t_deletedWritten = null;
+    }
+
+    public void DiscardPendingClears()
+    {
+        t_writtenMails = null;
+        t_deletedWritten = null;
     }
 
     [ThreadStatic] private static int t_persistDeferDepth;

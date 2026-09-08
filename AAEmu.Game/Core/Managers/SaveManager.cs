@@ -263,11 +263,15 @@ public class SaveManager(
     {
         AccountAttendanceManager.Instance.ConfirmSaved();
         ScheduleItemManager.Instance.ConfirmSaved();
+        ItemManager.Instance?.ConfirmSaved();
+        MailManager.Instance?.ConfirmSaved();
     }
 
     private static void DiscardAccountLiveClears()
     {
         AccountAttendanceManager.Instance.DiscardPendingClears();
         ScheduleItemManager.Instance.DiscardPendingClears();
+        ItemManager.Instance?.DiscardPendingClears();
+        MailManager.Instance?.DiscardPendingClears();
     }
 }

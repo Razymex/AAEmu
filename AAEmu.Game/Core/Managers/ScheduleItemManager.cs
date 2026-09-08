@@ -193,13 +193,14 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         var previousGave = progress.Gave;
         var previousCumulated = progress.Cumulated;
         var previousUpdated = progress.Updated;
+        BaseMail mail = null;
         using (WorldSnapshotCommit.Begin(bypassCharges: false))
         {
             progress.Gave = (byte)Math.Min(byte.MaxValue, progress.Gave + 1);
             progress.Cumulated = 0;
             progress.Updated = now;
             MarkDirty(character.AccountId, def.Id);
-            if (!TryGrant(character, def, out byMail, out _))
+            if (!TryGrant(character, def, out byMail, out mail))
             {
                 progress.Gave = previousGave;
                 progress.Cumulated = previousCumulated;
@@ -216,7 +217,9 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         progress.Gave = previousGave;
         progress.Cumulated = previousCumulated;
         progress.Updated = previousUpdated;
-        if (def.ItemId != 0 && def.ItemCount > 0)
+        if (mail != null)
+            MailManager.Instance.DiscardUnpersisted(mail);
+        else if (def.ItemId != 0 && def.ItemCount > 0)
             character.Inventory.Bag.ConsumeItem(ItemTaskType.TakeScheduleItem, def.ItemId, def.ItemCount, null);
         return false;
     }
@@ -253,25 +256,22 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         }
     }
 
-    private static bool TryGrant(Character character, ScheduleItemDef def, out bool byMail, out bool deliveredAny)
+    private static bool TryGrant(Character character, ScheduleItemDef def, out bool byMail, out BaseMail mail)
     {
         byMail = false;
-        deliveredAny = false;
+        mail = null;
         if (character.Inventory.Bag.SpaceLeftForItem(def.ItemId) >= def.ItemCount)
         {
-            if (!character.Inventory.Bag.AcquireDefaultItem(
+            return character.Inventory.Bag.AcquireDefaultItem(
                     ItemTaskType.TakeScheduleItem,
                     def.ItemId,
-                    def.ItemCount))
-                return false;
-            deliveredAny = true;
-            return true;
+                    def.ItemCount);
         }
 
         if (string.IsNullOrEmpty(def.MailTitle) || string.IsNullOrEmpty(def.MailBody))
             return false;
 
-        var mail = new BaseMail
+        mail = new BaseMail
         {
             MailType = MailType.Promotion,
             Title = def.MailTitle,
@@ -302,12 +302,10 @@ public class ScheduleItemManager : Singleton<ScheduleItemManager>
         mail.Body.Attachments.AddRange(added);
         if (!mail.Send())
         {
-            if (!MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, added))
-                deliveredAny = true;
+            MailDeliveryRules.TryDiscardStagedAttachments(character.Inventory.MailAttachments, added);
             return false;
         }
 
-        deliveredAny = true;
         byMail = true;
         return true;
     }
