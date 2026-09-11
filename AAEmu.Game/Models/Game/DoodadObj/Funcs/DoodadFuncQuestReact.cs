@@ -20,7 +20,26 @@ public class DoodadFuncQuestReact : DoodadPhaseFuncTemplate
 
     public override bool Use(BaseUnit caster, Doodad owner)
     {
-        if (caster is not Character character || owner == null || QuestId == 0)
+        if (caster is not Character character || owner == null)
+            return false;
+
+        if (!TryResolveViewerNext(character, owner.FuncGroupId, out var viewerPhase))
+            return false;
+
+        if (DoodadQuestReactRules.ShouldMutateSharedPhase())
+        {
+            owner.OverridePhase = (int)viewerPhase;
+            return true;
+        }
+
+        owner.SetQuestReactViewerPhase(character.ObjId, viewerPhase);
+        return false;
+    }
+
+    public bool TryResolveViewerNext(Character character, uint currentPhase, out uint viewerPhase)
+    {
+        viewerPhase = currentPhase;
+        if (character == null || QuestId == 0)
             return false;
 
         ReadQuestState(character, QuestId, QuestComponentId, out var actualStatus, out var activeComponentId,
@@ -32,10 +51,10 @@ public class DoodadFuncQuestReact : DoodadPhaseFuncTemplate
             return false;
         }
 
-        if (!DoodadQuestReactRules.ShouldAdvance(NextPhase, owner.FuncGroupId))
+        var next = DoodadQuestReactRules.NextViewerPhase(currentPhase, NextPhase);
+        if (!DoodadQuestReactRules.ShouldKeepViewerPhase(currentPhase, next))
             return false;
-
-        owner.OverridePhase = NextPhase;
+        viewerPhase = next;
         return true;
     }
 

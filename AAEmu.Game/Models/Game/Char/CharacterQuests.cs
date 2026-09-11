@@ -17,6 +17,7 @@ using AAEmu.Game.Models.Spheres;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.World;
 using MySql.Data.MySqlClient;
 
@@ -116,10 +117,12 @@ public class CharacterQuests(Character owner)
                 pending.Component.BuffId);
 
             var questId = pending.Component.ParentQuestTemplate?.Id ?? 0;
-            if (questId != 0 && ActiveQuests.TryGetValue(questId, out var quest))
+            if (questId != 0 &&
+                ActiveQuests.TryGetValue(questId, out var quest) &&
+                QuestCinemaBindRules.ShouldApplyCinemaEndEffect(true))
+            {
                 quest.UseSkillAndBuff(pending.Component);
-            else
-                QuestComponentEffectRules.ApplySkillAndBuff(Owner, pending.Component, SkillManager.Instance);
+            }
         }
 
         if (applied == 0)
@@ -282,7 +285,12 @@ public class CharacterQuests(Character owner)
     {
         var doodad = Owner.ParentWorld.GetDoodad(doodadObjId);
         if (doodad != null)
-            return AddQuest(questId, false, QuestAcceptorType.Doodad, doodad.TemplateId);
+        {
+            var started = AddQuest(questId, false, QuestAcceptorType.Doodad, doodad.TemplateId);
+            if (started)
+                doodad.RefreshQuestReactFor(Owner, questId);
+            return started;
+        }
 
         if (!_observedQuestDoodads.TryGetValue(doodadObjId, out var observed) ||
             observed.ZoneId != Owner.Transform.ZoneId ||
@@ -302,6 +310,19 @@ public class CharacterQuests(Character owner)
 
         _observedQuestDoodads[doodadObjId] = new ObservedQuestDoodad(doodadTemplateId, Owner.Transform.ZoneId);
         return true;
+    }
+
+    /// <summary>
+    /// QuestReact rows only live on the current phase. Re-apply nearby after a step
+    /// change so the body flips without a leave/re-enter.
+    /// </summary>
+    public void ApplyNearbyQuestReacts(uint questId)
+    {
+        if (Owner == null || questId == 0)
+            return;
+
+        foreach (var doodad in WorldManager.GetAround<Doodad>(Owner))
+            doodad?.RefreshQuestReactFor(Owner, questId);
     }
 
     /// <summary>
@@ -362,6 +383,7 @@ public class CharacterQuests(Character owner)
         quest.Cleanup();
         quest.Drop(update);
         quest.FinalizeQuestActs();
+        ClearCinemaEndEffects(questId);
         ActiveQuests.Remove(questId);
         _removed.Add(questId);
 
@@ -376,6 +398,18 @@ public class CharacterQuests(Character owner)
         QuestManager.Instance.RemoveQuestTimer(Owner.Id, questId);
 
         QuestIdManager.Instance.ReleaseId((uint)quest.Id);
+    }
+
+    private void ClearCinemaEndEffects(uint questId)
+    {
+        if (questId == 0)
+            return;
+        for (var i = _cinemaEndEffects.Count - 1; i >= 0; i--)
+        {
+            var pendingQuestId = _cinemaEndEffects[i].Component?.ParentQuestTemplate?.Id ?? 0;
+            if (QuestCinemaBindRules.CinemaEndBelongsToQuest(pendingQuestId, questId))
+                _cinemaEndEffects.RemoveAt(i);
+        }
     }
 
     /// <summary>

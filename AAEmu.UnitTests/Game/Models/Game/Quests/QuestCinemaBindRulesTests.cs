@@ -60,4 +60,14 @@ public class QuestCinemaBindRulesTests
         await Assert.That(QuestCinemaBindRules.ResolveCompletedCinema(0, [])).IsEqualTo(0u);
         await Assert.That(QuestCinemaBindRules.ResolveCompletedCinema(0, null)).IsEqualTo(0u);
     }
+
+    [Test]
+    public async Task DroppedQuest_DoesNotApplyCinemaEnd()
+    {
+        await Assert.That(QuestCinemaBindRules.ShouldApplyCinemaEndEffect(true)).IsTrue();
+        await Assert.That(QuestCinemaBindRules.ShouldApplyCinemaEndEffect(false)).IsFalse();
+        await Assert.That(QuestCinemaBindRules.CinemaEndBelongsToQuest(3901, 3901)).IsTrue();
+        await Assert.That(QuestCinemaBindRules.CinemaEndBelongsToQuest(3901, 2385)).IsFalse();
+        await Assert.That(QuestCinemaBindRules.CinemaEndBelongsToQuest(0, 3901)).IsFalse();
+    }
 }

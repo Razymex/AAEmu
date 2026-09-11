@@ -43,4 +43,14 @@ public class DoodadQuestReactRulesTests
         await Assert.That(DoodadQuestReactRules.ShouldAdvance(-1, 41730)).IsFalse();
         await Assert.That(DoodadQuestReactRules.ShouldAdvance(0, 41730)).IsFalse();
     }
+
+    [Test]
+    public async Task QuestReact_DoesNotMoveTheSharedPhase()
+    {
+        await Assert.That(DoodadQuestReactRules.ShouldMutateSharedPhase()).IsFalse();
+        await Assert.That(DoodadQuestReactRules.ShouldKeepViewerPhase(41880, 41881)).IsTrue();
+        await Assert.That(DoodadQuestReactRules.ShouldKeepViewerPhase(41880, 41880)).IsFalse();
+        await Assert.That(DoodadQuestReactRules.NextViewerPhase(41880, 41881)).IsEqualTo(41881u);
+        await Assert.That(DoodadQuestReactRules.NextViewerPhase(41880, 41880)).IsEqualTo(41880u);
+    }
 }

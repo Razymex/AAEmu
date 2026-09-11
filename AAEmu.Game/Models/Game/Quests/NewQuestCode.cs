@@ -228,6 +228,7 @@ public partial class Quest
 
         // Trigger OnQuestStepChanged event, even if this step is not available
         Owner?.Events?.OnQuestStepChanged(Owner, new OnQuestStepChangedArgs { QuestId = TemplateId, Step = value });
+        Owner?.Quests?.ApplyNearbyQuestReacts(TemplateId);
         // Owner?.SendMessage($"Quest {TemplateId}, Step {oldValue} => {value}");
         // Logger.Debug($"Player {Owner?.Name ?? "???"}, Quest {TemplateId}, Step => {value}");
         RequestEvaluation();

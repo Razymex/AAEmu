@@ -25,7 +25,9 @@ public class DoodadFuncQuest : DoodadFuncTemplate
                 && quest.Template != null
                 && DoodadQuestFuncRules.ShouldOfferComplete(
                     quest.GetQuestObjectiveStatus(),
-                    quest.Template.LetItDone))
+                    quest.Template.LetItDone,
+                    quest.Status,
+                    quest.Step))
             {
                 Logger.Info(
                     "DoodadFuncQuest complete-offer tpl={0} obj={1} quest={2}",

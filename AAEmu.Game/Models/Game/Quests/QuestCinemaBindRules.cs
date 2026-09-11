@@ -58,4 +58,12 @@ public static class QuestCinemaBindRules
 
         return found;
     }
+
+    /// <summary>
+    /// Dropped quests must not apply a deferred cinema skill or buff.
+    /// </summary>
+    public static bool ShouldApplyCinemaEndEffect(bool questStillActive) => questStillActive;
+
+    public static bool CinemaEndBelongsToQuest(uint pendingQuestId, uint droppedQuestId) =>
+        droppedQuestId != 0 && pendingQuestId == droppedQuestId;
 }

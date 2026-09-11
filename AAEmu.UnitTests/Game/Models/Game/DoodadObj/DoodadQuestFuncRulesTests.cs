@@ -67,6 +67,28 @@ public class DoodadQuestFuncRulesTests
     }
 
     [Test]
+    public async Task ReadyStep_OffersCompleteEvenIfObjectivesReadNotReady()
+    {
+        await Assert.That(DoodadQuestFuncRules.ShouldOfferComplete(
+            QuestObjectiveStatus.NotReady,
+            letItDone: false,
+            QuestStatus.Ready,
+            QuestComponentKind.Ready)).IsTrue();
+        await Assert.That(DoodadQuestFuncRules.ShouldOfferComplete(
+            QuestObjectiveStatus.NotReady,
+            letItDone: false,
+            QuestStatus.Progress,
+            QuestComponentKind.Progress)).IsFalse();
+    }
+
+    [Test]
+    public async Task Interaction_CountsOnlyWhenUseRanAFunc()
+    {
+        await Assert.That(DoodadQuestFuncRules.ShouldCountInteraction(true)).IsTrue();
+        await Assert.That(DoodadQuestFuncRules.ShouldCountInteraction(false)).IsFalse();
+    }
+
+    [Test]
     public async Task NothingStartable_ReturnsDefault()
     {
         var picked = Pick(has: [], done: [2387, 2388, 2396, 2401]);

@@ -40,6 +40,26 @@ public static class DoodadQuestFuncRules
     }
 
     /// <summary>
+    /// Ready step/status is already past Progress counters (those acts are finalized).
+    /// Count the journal Ready flag, not only leftover objective cells.
+    /// </summary>
+    public static bool ShouldOfferComplete(
+        QuestObjectiveStatus objectiveStatus,
+        bool letItDone,
+        QuestStatus questStatus,
+        QuestComponentKind step)
+    {
+        if (questStatus == QuestStatus.Ready || step == QuestComponentKind.Ready)
+            return true;
+        return ShouldOfferComplete(objectiveStatus, letItDone);
+    }
+
+    /// <summary>
+    /// A Use that found no matching func must not credit <c>QuestActObjInteraction</c>.
+    /// </summary>
+    public static bool ShouldCountInteraction(bool useAppliedFunc) => useAppliedFunc;
+
+    /// <summary>
     /// Prefer an in-progress report, else the first startable accept.
     /// </summary>
     public static T Select<T>(

@@ -33,4 +33,17 @@ public static class DoodadQuestReactRules
     {
         return nextPhase > 0 && (uint)nextPhase != currentFuncGroupId;
     }
+
+    /// <summary>
+    /// QuestReact is per viewer. The shared persisted phase must not move.
+    /// </summary>
+    public static bool ShouldMutateSharedPhase() => false;
+
+    public static bool ShouldKeepViewerPhase(uint sharedPhase, uint viewerPhase) =>
+        viewerPhase != 0 && viewerPhase != sharedPhase;
+
+    public static uint NextViewerPhase(uint currentPhase, int reactNextPhase) =>
+        ShouldAdvance(reactNextPhase, currentPhase) ? (uint)reactNextPhase : currentPhase;
+
+    public const int MaxViewerHops = 8;
 }
