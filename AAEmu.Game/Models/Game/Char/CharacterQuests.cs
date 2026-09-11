@@ -165,10 +165,12 @@ public class CharacterQuests(Character owner)
     }
 
     /// <summary>
-    /// Applies the cinema-end entries a previous session could not finish. The component id
+    /// Queues the cinema-end entries a previous session could not finish. The component id
     /// is the only durable name for the effect, so a component that no longer exists is
     /// dropped with a warning. Production resolves through the quest manager; tests inject
-    /// their own resolver.
+    /// their own resolver. The queued entries are applied by
+    /// <see cref="FlushPendingCinemaEndEffects"/> after world entry or on leave — never
+    /// during load, where the buff packet has no connection.
     /// </summary>
     public void RestorePendingCinemaEndEffects(
         IReadOnlyList<(uint QuestId, uint CinemaId, uint ComponentId)> rows,
@@ -193,8 +195,6 @@ public class CharacterQuests(Character owner)
 
             EnqueueCinemaEndEffects(row.CinemaId, component);
         }
-
-        FlushPendingCinemaEndEffects();
     }
 
     public bool HasQuest(uint questId)
@@ -815,8 +815,9 @@ public class CharacterQuests(Character owner)
         }
 
         // A pending cinema-end effect survives a dropped connection: the client never reports
-        // the film ending and the step is already saved, so apply what the quest still owes.
-        // The rows are cleared once they are restored.
+        // the film ending and the step is already saved. The row is queued here and replayed
+        // after world entry (the buff packet needs the live connection); it is cleared by the
+        // character save that follows, so a failed apply cannot lose it.
         try
         {
             var pendingCinemaEnds = new List<(uint QuestId, uint CinemaId, uint ComponentId)>();
@@ -837,17 +838,7 @@ public class CharacterQuests(Character owner)
                 }
             }
 
-            if (pendingCinemaEnds.Count == 0)
-                return;
-
             RestorePendingCinemaEndEffects(pendingCinemaEnds);
-
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "DELETE FROM character_quest_cinema_end_effects WHERE `owner` = @owner";
-                command.Parameters.AddWithValue("@owner", Owner.Id);
-                command.ExecuteNonQuery();
-            }
         }
         catch (MySqlException ex)
         {

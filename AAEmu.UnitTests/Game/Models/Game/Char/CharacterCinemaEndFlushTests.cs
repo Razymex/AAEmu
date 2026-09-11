@@ -68,7 +68,7 @@ public class CharacterCinemaEndFlushTests
     }
 
     [Test]
-    public async Task Restore_AppliesTheSavedEntryForACompletedQuest()
+    public async Task Restore_QueuesTheEntryUntilWorldEntry()
     {
         var quests = NewQuests();
         quests.SetCompletedQuestFlag(QuestId, true);
@@ -76,6 +76,11 @@ public class CharacterCinemaEndFlushTests
         quests.RestorePendingCinemaEndEffects(
             new[] { (QuestId, CinemaId, ComponentId) },
             _ => BuildComponent());
+
+        // Queued, not applied: the buff packet needs the live connection world entry brings.
+        await Assert.That(quests.DeferredCinemaIds()).Count().IsEqualTo(1);
+
+        quests.FlushPendingCinemaEndEffects();
 
         await Assert.That(quests.DeferredCinemaIds()).IsEmpty();
     }

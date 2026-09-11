@@ -19,6 +19,9 @@ public class CSNotifyInGameCompletedPacket() : GamePacket(CSOffsets.CSNotifyInGa
         {
             WorldIntegration.SyncTowerDefsToCharacter?.Invoke(Connection.ActiveChar);
             SquadManager.Instance.SyncClientSquadAfterLogin(Connection.ActiveChar);
+            // A cinema the previous session never finished still owes its buff or teleport.
+            // Load only queues it — the effect needs the live connection that entry brings.
+            Connection.ActiveChar.Quests.FlushPendingCinemaEndEffects();
         }
     }
 
