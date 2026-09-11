@@ -476,6 +476,7 @@ CREATE TABLE IF NOT EXISTS `housings` (
   `sell_to` int unsigned NOT NULL DEFAULT '0',
   `sell_price` bigint NOT NULL DEFAULT '0',
   `allow_recover` tinyint unsigned NOT NULL DEFAULT '1',
+  `sell_public` tinyint unsigned NOT NULL DEFAULT '1',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Player buildings';
 
@@ -536,6 +537,8 @@ CREATE TABLE IF NOT EXISTS `mails` (
   `open_date` datetime NOT NULL,
   `send_date` datetime NOT NULL,
   `received_date` datetime NOT NULL,
+  `sender_deleted` tinyint(1) NOT NULL DEFAULT '0',
+  `receiver_deleted` tinyint(1) NOT NULL DEFAULT '0',
   `returned` int NOT NULL,
   `extra` bigint NOT NULL,
   `money_amount_1` int NOT NULL,

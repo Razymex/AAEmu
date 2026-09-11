@@ -8,7 +8,7 @@ public class IdManagerTests
 
     public static IEnumerable<(IIdManager, uint)> IdManagerFirstIdData() =>
     [
-        (new CharacterIdManager(), 0x00000001u),
+        (new CharacterIdManager(), 0x000003E9u),
         (new ItemIdManager(), 0x01000000u),
         (new ObjectIdManager(), 0x00000100u),
         (new DoodadIdManager(), 0x00000001u),
@@ -249,7 +249,7 @@ public class IdManagerTests
     {
         var manager = new CharacterIdManager();
         manager.Initialize(true);
-        const uint expectedFirstId = 0x00000001u;
+        const uint expectedFirstId = 0x000003E9u; // 1001: 10.x clients treat sub-1000 character ids as system
 
         var id = manager.GetNextId();
 
@@ -266,9 +266,9 @@ public class IdManagerTests
         var id2 = manager.GetNextId();
         var id3 = manager.GetNextId();
 
-        await Assert.That(id1).IsEqualTo(0x00000001u);
-        await Assert.That(id2).IsEqualTo(0x00000002u);
-        await Assert.That(id3).IsEqualTo(0x00000003u);
+        await Assert.That(id1).IsEqualTo(0x000003E9u);
+        await Assert.That(id2).IsEqualTo(0x000003EAu);
+        await Assert.That(id3).IsEqualTo(0x000003EBu);
     }
 
     [Test]
@@ -617,7 +617,7 @@ public class IdManagerTests
         var auctionId = auctionMgr.GetNextId();
 
         // Assert - Each manager should return their respective first IDs
-        await Assert.That(charId).IsEqualTo(0x00000001u);
+        await Assert.That(charId).IsEqualTo(0x000003E9u);
         await Assert.That(itemId).IsEqualTo(0x01000000u);
         await Assert.That(objId).IsEqualTo(0x00000100u);
         await Assert.That(doodadId).IsEqualTo(0x00000001u);

@@ -74,14 +74,14 @@ public static class HousingZoneBridge
         var ownerName = NameManager.Instance.GetCharacterName(house.OwnerId) ?? "";
         var sellToName = NameManager.Instance.GetCharacterName(house.SellToPlayerId) ?? "";
         var currentAction = house.CurrentStep == -1 ? house.AllAction : house.CurrentAction;
-        var payMoneyAmount = house.Template?.Taxation?.Tax ?? 0;
+        // Fix: sale price goes on the wire here, not tax (see House.Write)
         var pos = house.Transform.World.Position;
 
         stream.Write((ushort)(house.TlId != 0 ? house.TlId : (ushort)(house.Id & 0xFFFF)));
         stream.Write(house.Id);
         stream.WriteBc(house.ObjId);
         stream.WritePisc(house.TemplateId, (uint)house.AllAction, (uint)currentAction);
-        stream.Write((long)payMoneyAmount);
+        stream.Write((long)house.SellPrice); // Fix: sale price, was tax
         stream.Write(0); // ht
         stream.Write((long)house.CoOwnerId);
         stream.Write((long)house.OwnerId);
@@ -94,7 +94,7 @@ public static class HousingZoneBridge
         stream.Write((long)house.SellPrice);
         stream.Write(sellToName);
         stream.Write(0); // expandedDecoLimit
-        stream.Write(house.SellToPlayerId);
+        stream.Write(house.SellToPlayerId); // Kept at the u32 layout: the native zone host closes the connection on the long (u64) form.
         stream.Write(false); // isPublic
         stream.Write(false); // isBoundButler
         stream.Write(0u);

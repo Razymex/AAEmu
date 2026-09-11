@@ -1,4 +1,4 @@
-﻿using AAEmu.Commons.Utils;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Models.Game.Taxations;
 using AAEmu.Game.Utils.DB;
 
@@ -20,6 +20,7 @@ public class TaxationsManager : Singleton<TaxationsManager>, ITaxationsManager
         using (var connection = SQLite.CreateConnection())
         {
             Logger.Info("Loading taxations ...");
+            HeavyTaxRules.Load(connection);
 
             using (var command = connection.CreateCommand())
             {
@@ -31,7 +32,7 @@ public class TaxationsManager : Singleton<TaxationsManager>, ITaxationsManager
                     {
                         var template = new Taxation
                         {
-                            Id = reader.GetUInt32("id"), Tax = reader.GetUInt32("tax"), Show = reader.GetBoolean("show", true)
+                            Id = reader.GetUInt32("id"), Tax = reader.GetUInt32("tax"), Show = reader.GetBoolean("show", true), SealCount = reader.GetUInt32("seal_count", 1)
                         };
                         taxations.Add(template.Id, template);
                     }

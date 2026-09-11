@@ -148,7 +148,8 @@ public class ZonePacketWireTests
         await Assert.That(stream.ReadUInt32()).IsEqualTo(0x11223344u);
         await Assert.That(stream.ReadBc()).IsEqualTo(0x050607u);
         await Assert.That(stream.ReadPisc(3)).IsEquivalentTo(new uint[] { template.Id, 10, 4 });
-        await Assert.That(stream.ReadInt64()).IsEqualTo(75L);
+        // Verified in-game: wire moneyAmount is SellPrice (44), not tax (75).
+        await Assert.That(stream.ReadInt64()).IsEqualTo(44L);
         await Assert.That(stream.ReadInt32()).IsEqualTo(0);
         await Assert.That(stream.ReadInt64()).IsEqualTo(11L);
         await Assert.That(stream.ReadInt64()).IsEqualTo(22L);

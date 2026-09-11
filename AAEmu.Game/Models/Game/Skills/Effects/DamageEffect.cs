@@ -1,4 +1,4 @@
-﻿using AAEmu.Commons.Utils;
+using AAEmu.Commons.Utils;
 using AAEmu.Game;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets;
@@ -7,6 +7,7 @@ using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Faction;
 using AAEmu.Game.Models.Game.Items.Procs;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Skills.Static;
 using AAEmu.Game.Models.Game.Skills.Templates;
@@ -84,6 +85,18 @@ public class DamageEffect : EffectTemplate
         // tick has no authoritative attacker to attribute damage, procs, aggro, or crime to.
         if (caster is not Unit)
             return;
+
+        // House removal debuff (buff 2250) is self-cast (caster == target == the house). CanAttack
+        // rejects self-targets, so route the tick to HousingManager, which scales the damage to the
+        // house's own MaxHp and owns the wreck/shell timing.
+        if (source.Buff?.Id == (uint)BuffConstants.RemovalDebuff && target is House house)
+        {
+            // Authored damage is the fallback so the target data governs unless a server opts into
+            // percentage scaling. damage_effects 1876 authors fixed 10 per 15s tick.
+            var authoredDamage = Math.Max(1, FixedMin);
+            HousingManager.Instance.ApplyDemolitionTick(house, caster, authoredDamage);
+            return;
+        }
 
         if (Bonuses != null)
         {

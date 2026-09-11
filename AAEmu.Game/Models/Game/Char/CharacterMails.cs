@@ -1,4 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers;
 using System.Linq;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game;
@@ -50,9 +50,9 @@ public class CharacterMails
         {
             if (!MailDeliveryRules.IsPublished(mail))
                 continue;
-            if (mail.Body.RecvDate > now)
-                continue;
             if (!BelongsInMailbox(mail, mailBoxListKind))
+                continue;
+            if (mailBoxListKind != 2 && mail.Body.RecvDate > now)   // sender's Sent is never delayed
                 continue;
             candidates.Add(mail);
         }
@@ -74,7 +74,7 @@ public class CharacterMails
         {
             Self.SendPacket(new SCMailListPacket(isSentBox, total, mail.Header, mailBoxListKind));
             // Marketplace Mail Lua (comercial_mailbox.FillMailList) requires BOTH title and
-            // body for every row: body nil ⇒ MAIL_LIST_CONTINUE + WaitPageCont spinner forever.
+            // body for every row: body nil ? MAIL_LIST_CONTINUE + WaitPageCont spinner forever.
             // SCMailList only seeds the title; push SCMailBody (isPrepare) so GetCacheBodyInfo
             // returns non-nil and CompleteMailList can run.
             // Kind 3 is commercial; also send for inbox so recvDate/attachments display match.
@@ -104,12 +104,15 @@ public class CharacterMails
         {
             // Sent box
             2 => mail.Header.SenderId == Self.Id && mail.Header.SenderId != 0 &&
+                 !mail.SenderDeleted &&
                  mail.MailType is not (MailType.Charged or MailType.Promotion),
             // Marketplace / commercial (Charged=9, Promotion=10)
             3 => mail.Header.ReceiverId == Self.Id &&
+                 !mail.ReceiverDeleted &&
                  mail.MailType is MailType.Charged or MailType.Promotion,
             // Normal inbox (not commercial, not mia)
             _ => mail.Header.ReceiverId == Self.Id &&
+                 !mail.ReceiverDeleted &&
                  mail.MailType is not (MailType.Charged or MailType.Promotion) &&
                  mail.MailType != MailType.MiaRecv
         };
@@ -135,16 +138,22 @@ public class CharacterMails
             var isFromMe = mail.Header.SenderId == Self.Id && mail.Header.SenderId != 0;
             if (!isForMe && !isFromMe)
                 continue;
-            if (mail.Body.RecvDate > now)
-                continue;
 
             if (isFromMe && !isForMe)
             {
+                // Sent history: never gated by the recipient's delivery delay.
+                if (mail.SenderDeleted)
+                    continue;
                 UnreadMailCount.TotalSent++;
                 if (mail.Header.Status != MailStatus.Read)
                     UnreadMailCount.Sent++;
                 continue;
             }
+
+            if (mail.ReceiverDeleted)
+                continue;
+            if (mail.Body.RecvDate > now)
+                continue;
 
             // Inbox / commercial addressed to this character
             UnreadMailCount.AddTotal(mail.MailType);
@@ -161,7 +170,7 @@ public class CharacterMails
     /// ReadMail returned the body, DeleteMail destroyed it, and GetAttached handed over its coin and items.
     /// Ids come from MailIdManager and run consecutively, so they did not even have to be guessed.
     ///
-    /// <paramref name="sentBox"/> selects which side of the mail the caller claims to be — the sender for the
+    /// <paramref name="sentBox"/> selects which side of the mail the caller claims to be - the sender for the
     /// sent tab, the receiver for the inbox.
     /// </summary>
     private bool TryGetOwnMail(long id, bool sentBox, out BaseMail mail)
@@ -239,7 +248,7 @@ public class CharacterMails
     ///
     /// Login cannot use <see cref="MailManager.GetCurrentMailList"/> for this. That method resolves the
     /// Character through <c>WorldManager.GetCharacterById</c> and null-conditionals every use of it, but
-    /// <c>CSSelectCharacter</c> runs <c>Character.Load</c> — and with it the mail load — at line 29, while the
+    /// <c>CSSelectCharacter</c> runs <c>Character.Load</c> - and with it the mail load - at line 29, while the
     /// character is only assigned an ObjId at 51 and registered with <c>TryAddCharacter</c> at 55. The lookup
     /// therefore always missed, every count stayed zero, and both <c>SCCharacterState</c> and
     /// <c>SCCountTotalMail</c> reported an empty mailbox until the player opened it by hand.
@@ -354,28 +363,51 @@ public class CharacterMails
         if (!mail.FinalizeAttachments())
             return MailResult.InvalidSlot; // Should never fail at this point
 
-        // Add delay if not a normal snail mail
+        // Delay applies to the RECIPIENT only; the sender's Sent copy is never gated by it.
         if (mailType == MailType.Normal)
             mail.Body.RecvDate = DateTime.UtcNow + MailManager.NormalMailDelay;
 
-        // Send it. The save that Send requests runs when this scope closes, i.e. after the
-        // fee and attached coin have left the sender's wallet; a restart cannot restore the
-        // sender's balance while the recipient already holds the letter.
+
+        // The deferred scope is the only write. If the snapshot did not commit, do not report
+        // success: put the items back in the sender's bag, then drop the pending letter.
         using var persist = MailManager.Instance.DeferPersist();
-        if (mail.Send())
+
+        // Enqueue unpublished: the flush below must commit the letter before the recipient can see
+        // it or take its coins, or a failed save would refund the sender while the recipient already
+        // holds the money. Send() notifies only when published, so this stays quiet until then.
+        MailDeliveryRules.PrepareAttachments(mail);
+        if (!MailManager.Instance.Send(mail, publishNow: false))
         {
-            // The client's SCMailSent reader (FUN_39a9ecf0) expects the group flag and the mailbox
-            // counters after the header; refresh so they are current.
-            RefreshAllMailCounts();
-            Self.SendPacket(new SCMailSentPacket(false, mail.Header, UnreadMailCount, itemSlots.ToArray()));
-            // Take the fee + attached copper. SubtractMoney takes long, so no narrowing.
-            Self.SubtractMoney(SlotType.Inventory, totalCost);
-            return MailResult.Success;
+            // FinalizeAttachments already moved the items into the mail container; put them back.
+            mail.RollbackAttachments();
+            return MailResult.MailErrorOccurred;
         }
-        else
+
+        // Charge before the write. The snapshot runs on scope close, so a restart must never see
+        // the letter delivered while the sender's wallet still holds the fee.
+        Self.SubtractMoney(SlotType.Inventory, totalCost);
+
+        // The rollback runs from the flush failure callback so it happens while the save lock is
+        // still held: another snapshot can otherwise commit the letter before the refund lands,
+        // leaving both the refunded fee and a delivered mail.
+        if (!WorldSnapshotCommit.FlushNow(false, onFailed: () =>
+            {
+                mail.RollbackAttachments();
+                MailManager.Instance.DiscardUnpersisted(mail);
+                Self.ChangeMoney(SlotType.Inventory, totalCost);
+            }))
         {
             return MailResult.MailErrorOccurred;
         }
+
+        // Committed: the letter may now appear in the recipient's mailbox.
+        MailManager.Instance.PublishDelivered(mail);
+
+        // The client's SCMailSent reader expects the group flag and the mailbox counters after
+        // the header; refresh so they are current.
+        RefreshAllMailCounts();
+        Self.SendPacket(new SCMailSentPacket(false, mail.Header, UnreadMailCount, itemSlots.ToArray()));
+        return MailResult.Success;
     }
 
     public bool GetAttached(long mailId, bool takeMoney, bool takeItems, bool takeAllSelected, ulong specifiedItemId = 0)
@@ -520,7 +552,11 @@ public class CharacterMails
                     {
                         iSlot
                     };
-                    Self.SendPacket(new SCAttachmentTakenPacket(mailId, takeMoney, false, takeAllSelected, dummyItemSlotList));
+                    // Fix: money flag must be false here. The client decrements its cached attachment
+                    // count once per set flag AND once per item, so passing takeMoney made every item cost
+                    // two decrements; N items starting at N underflowed to -N and the delete button never
+                    // re-enabled until a relog rebuilt the count. The money packet below stays the only money dec.
+                    Self.SendPacket(new SCAttachmentTakenPacket(mailId, false, false, takeAllSelected, dummyItemSlotList));
                     thisMail.IsDirty = true;
                 }
             }
@@ -529,6 +565,9 @@ public class CharacterMails
             if (thisMail.Header.Status == MailStatus.Unread && (tookMoney || itemSlotList.Count > 0))
             {
                 thisMail.Header.Status = MailStatus.Read;
+                // The retention sweep measures read mail from OpenDate; leaving it unset made the
+                // sweep fall back to RecvDate and expire the mail the moment its first item went out.
+                thisMail.OpenDate = DateTime.UtcNow;
                 UnreadMailCount.UpdateReceived(thisMail.MailType, -1);
                 Self.SendPacket(new SCMailStatusUpdatedPacket(false, mailId, MailStatus.Read));
                 SendUnreadMailCount();
@@ -545,25 +584,35 @@ public class CharacterMails
 
     public void DeleteMail(long id, bool isSent)
     {
-        if (isSent || !TryGetOwnMail(id, false, out var mail))
+        if (!TryGetOwnMail(id, isSent, out var mail))
+        {
+            NotifyMailGone(id);
             return;
+        }
 
         // A mail still holding coin or items is not disposable; its contents would go with it.
         if (mail.Header.Attachments > 0)
             return;
 
+        // Sender's Sent copy: logical delete that never touches the recipient's inbox copy.
+        if (isSent)
+        {
+            MailManager.Instance.DeleteForSender(mail);
+            return;
+        }
+
         UnreadMailCount.AddTotal(mail.MailType, -1);
         if (mail.Header.Status != MailStatus.Read)
         {
             UnreadMailCount.UpdateReceived(mail.MailType, -1);
-            Self.SendPacket(new SCMailDeletedPacket(isSent, id, true, UnreadMailCount));
+            Self.SendPacket(new SCMailDeletedPacket(false, id, true, UnreadMailCount));
         }
         else
         {
-            Self.SendPacket(new SCMailDeletedPacket(isSent, id, false, UnreadMailCount));
+            Self.SendPacket(new SCMailDeletedPacket(false, id, false, UnreadMailCount));
         }
 
-        MailManager.Instance.DeleteMail(id);
+        MailManager.Instance.DeleteForReceiver(mail);
     }
 
     /// <summary>
@@ -572,8 +621,8 @@ public class CharacterMails
     /// This used to rebuild the attachment list by indexing <c>Body.Attachments</c> across all ten
     /// <c>MaxMailAttachments</c> slots and re-sending through <see cref="SendMailToPlayer"/>. Attachments is a
     /// variable-length list holding only the slots actually in use, so that walk threw
-    /// ArgumentOutOfRangeException on the first empty slot — every mail with fewer than ten attachments, which
-    /// is every mail — straight off a client packet. Past the throw it could not have worked either:
+    /// ArgumentOutOfRangeException on the first empty slot - every mail with fewer than ten attachments, which
+    /// is every mail - straight off a client packet. Past the throw it could not have worked either:
     /// PrepareAttachmentItems only accepts items sitting in SlotType.Inventory, and attachments live in the
     /// mail container, so the re-send would have failed InvalidSlot while DeleteMail ran regardless.
     ///

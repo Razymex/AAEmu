@@ -14,6 +14,7 @@ public class CSRebuildHouseTaxInfoPacket() : GamePacket(CSOffsets.CSRebuildHouse
 
     public override void Read(PacketStream stream)
     {
+
         Tl = stream.ReadInt16();
 
         // The client uses this request after changing the tax-panel state.  Timeline IDs are

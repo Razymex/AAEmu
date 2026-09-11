@@ -1,4 +1,5 @@
 using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
@@ -17,7 +18,10 @@ public class CSShowResidentChargeBalancePacket() : GamePacket(CSOffsets.CSShowRe
 
     public override void Read(PacketStream stream)
     {
+
         TypeValue = stream.ReadInt16();
         TypeValue2 = stream.ReadUInt64();
+
+        HousingManager.Instance.ResidentBalance(Connection, TypeValue, TypeValue2);
     }
 }

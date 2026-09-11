@@ -11,6 +11,26 @@ public class Configurations : PacketMarshaler
     public string Value { get; set; }
 }
 
+/// <summary>How the house removal debuff (buff 2250) is allowed to damage a house.</summary>
+public enum DemolitionTickDamageMode
+{
+    /// <summary>Use the damage authored on the effect (buff 2250 -> damage_effects 1876: fixed 10 per 15s).</summary>
+    Authored = 0,
+
+    /// <summary>Deal DemolitionTickDamagePercent of the house's MaxHp each tick.</summary>
+    Percent = 1,
+}
+
+/// <summary>How heavy-property tax is scaled.</summary>
+public enum HeavyTaxMode
+{
+    /// <summary>Use the loaded heavy_taxes multiplier as authored (largest count at or below).</summary>
+    TargetData = 0,
+
+    /// <summary>3.0 Revelations curve: 3 -> 2.0x ... 6 -> 3.5x, 7 -> 5.0x, 8+ -> 6.0x.</summary>
+    RetailCurve = 1,
+}
+
 public class WorldConfig
 {
     /// <summary>
@@ -150,12 +170,47 @@ public class WorldConfig
     public bool UsePersistentHouseDoodads { get; set; } = false;
 
     /// <summary>
+    /// Percentage of a house's MaxHp dealt per tick by the removal debuff (buff 2250) once the
+    /// house's protection has expired. The debuff ticks every 15s, so 25 means four ticks (~60s)
+    /// to wreck the house. Configure in <c>AAEmu.Game/Configurations/World.json</c> under
+    /// <c>World.DemolitionTickDamagePercent</c>.
+    /// </summary>
+    /// <summary>
+    /// How the removal debuff (buff 2250) damages a house. Authored (default) uses the effect's own
+    /// damage (damage_effects 1876 = fixed 10 per 15s tick); Percent deals
+    /// <see cref="DemolitionTickDamagePercent"/> of the house's MaxHp instead, which wrecks any size
+    /// of house in the same time. Configure in <c>World.json</c> under
+    /// <c>World.DemolitionTickDamageMode</c>.
+    /// </summary>
+    public DemolitionTickDamageMode DemolitionTickDamageMode { get; set; } = DemolitionTickDamageMode.Authored;
+
+    /// <summary>Percentage of house MaxHp per tick when <see cref="DemolitionTickDamageMode"/> is Percent.</summary>
+    public double DemolitionTickDamagePercent { get; set; } = 25.0;
+
+    /// <summary>
+    /// How heavy-property tax is scaled. TargetData (default) applies the loaded <c>heavy_taxes</c>
+    /// multiplier as authored - the client only renders the rate the server sends, so that table is
+    /// the only client-side source for the surcharge. RetailCurve uses the 3.0 Revelations curve
+    /// (7 heavy -> 5.0x, 8+ -> 6.0x) that some 10.x servers follow. Configure in <c>World.json</c>
+    /// under <c>World.HeavyTaxMode</c>.
+    /// </summary>
+    public HeavyTaxMode HeavyTaxMode { get; set; } = HeavyTaxMode.TargetData;
+
+    /// <summary>
+    /// Days a building-demolishment notice is kept before its attachments are released. The English
+    /// target help row gives 740; the Korean rule set implies 365. Configure in <c>World.json</c>
+    /// under <c>World.DemolitionMailRetentionDays</c>.
+    /// </summary>
+    public int DemolitionMailRetentionDays { get; set; } = 740;
+
+    /// <summary>
     /// When false, world doodad spawners and persistent doodads (including player-placed doodads)
     /// are not spawned at world load. Diagnostic toggle for isolating world-entry behaviour from
     /// doodad spawn data. Default: true.
     /// Configure in <c>AAEmu.Game/Configurations/World.json</c> under <c>World.SpawnDoodads</c>.
     /// </summary>
     public bool SpawnDoodads { get; set; } = true;
+
 
     /// <summary>
     /// When false, transfers (carriages, airships) are not spawned at world load. Diagnostic

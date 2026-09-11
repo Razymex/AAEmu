@@ -23,6 +23,8 @@ using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Mails;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Taxations;
+using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Game.World.Transform;
 using AAEmu.Game.Models.StaticValues;
@@ -56,9 +58,14 @@ public class HousingManager(
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
     private const uint ForSaleMarkerDoodadId = 6760;
-    private const int MaxHeavyTaxCounted = 10; // Maximum number of heavy tax buildings to take into account for tax calculation
     private const int HoursForFailedTaxToReturnHouse = 22;
-    private const double CopperPerCertificate = 1000000.0; // For older versions of AA, 1 sale certificate / 100g
+
+    /// <summary>The wreck stays standing this long after the removal debuff finishes the house.</summary>
+    private const int SecondsForDemolitionWreck = 20;
+
+    /// <summary>Wrecked houses (id -> when the wreck appeared). Drives the shell removal tick.</summary>
+    private readonly Dictionary<uint, DateTime> _wreckedHouses = [];
+    private const int MaxPrepaidWeeks = 5; // client MAX_PREPAID_WEEKS; prepay at or above this is refused
     private Dictionary<uint, House> _houses = [];
     private Dictionary<ushort, House> _housesTl = []; // TODO or so mb tlId is id in the active zone? or type of house
     private List<uint> _removedHousings = [];
@@ -229,6 +236,7 @@ public class HousingManager(
                         house.SellToPlayerId = reader.GetUInt32("sell_to");
                         house.SellPrice = reader.GetUInt32("sell_price");
                         house.AllowRecover = reader.GetBoolean("allow_recover");
+                        try { house.SellPublic = reader.GetBoolean(reader.GetOrdinal("sell_public")); } catch { house.SellPublic = true; }
                         _houses.Add(house.Id, house);
                         _housesTl.Add(house.TlId, house);
 
@@ -237,6 +245,9 @@ public class HousingManager(
                             house.ProtectionEndDate = house.PlaceDate.AddDays(14);
 
                         UpdateTaxInfo(house);
+                        // Expired houses are demolished by CleanupExpiredHouses after the furniture and
+                        // bound doodads have been spawned (see SpawnManager) - their contents cannot be
+                        // returned before that.
                         house.IsDirty = false;
                     }
                 }
@@ -250,6 +261,28 @@ public class HousingManager(
         taskManager.Schedule(houseCheckTask, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));
 
         Logger.Info("Started Housing Tax Timer");
+    }
+
+    /// <summary>
+    /// Runs the demolition lifecycle for houses whose protection expired while the server was down.
+    /// This must run AFTER the housing furniture and bound doodads are spawned, otherwise the
+    /// contents cannot be returned to the owner (the doodads do not exist yet during LoadPlayerHousing).
+    /// </summary>
+    public void CleanupExpiredHouses()
+    {
+        foreach (var house in _houses.Values.ToList())
+        {
+            if (house == null || house.OwnerId <= 0)
+                continue;
+            if (house.ProtectionEndDate > DateTime.UtcNow || _wreckedHouses.ContainsKey(house.Id))
+                continue;
+
+            // Normal lifecycle first - returns the contents, clears the tax mail and ownership,
+            // sends the notices - then the wreck shell removes the house.
+            Demolish(null, house, true, false);
+            _wreckedHouses[house.Id] = DateTime.UtcNow;
+            SetHouseHp(house, 0);
+        }
     }
 
     /// <summary>
@@ -583,7 +616,12 @@ public class HousingManager(
     public void ConstructHouseTax(GameConnection connection, uint designId, float x, float y, float z)
     {
 
-        var houseTemplate = HousingGameData.Instance.GetTemplate(designId);
+        var houseTemplate = HousingGameData.Instance.GetTemplate(designId);        if (!AccountPatron.IsPaid(connection.ActiveChar))
+        {
+            Logger.Debug("Build refused: design {0} needs patron", designId);
+            connection.ActiveChar.SendErrorMessage(ErrorMessageType.HouseCannotCreate);
+            return;
+        }
         if (houseTemplate == null)
         {
             connection.ActiveChar.SendErrorMessage(ErrorMessageType.HouseCannotCreateConstructTaxAbnormal);
@@ -630,22 +668,24 @@ public class HousingManager(
         var houseZoneGroupId = (ushort)zoneManager.GetZoneByKey(house.Transform.ZoneId).GroupId;
         CalculateBuildingTaxInfo(house.AccountId, house.Template, false, out var totalTaxAmountDue, out _, out _, out var hostileTaxRate, out _, houseZoneGroupId, house.Transform.World.Position.X, house.Transform.World.Position.Y);
 
-        var baseTax = (int)(house.Template.Taxation?.Tax ?? 0);
-        var depositTax = baseTax * 2;
+        // Fix: deposit is two scaled weeklies (was 2x base, ignoring heavy scaling)
+        var depositTax = totalTaxAmountDue * 2;
 
-        // Note: I'm sure this can be done better, but it works and displays correctly
+        // Fix: real overdue/prepay accounting (weeksPrepay was hardcoded 0)
         var requiresPayment = false;
-        var weeksWithoutPay = -1;
+        var weeksWithoutPay = 0; // paid-up mean 0 weeks missed (-1/0xFF reads as overdue client-side)
         if (house.TaxDueDate <= DateTime.UtcNow)
         {
             requiresPayment = true;
             weeksWithoutPay = 0;
         }
-        else if (house.ProtectionEndDate <= DateTime.UtcNow)
+        if (house.ProtectionEndDate <= DateTime.UtcNow)
         {
             requiresPayment = true;
-            weeksWithoutPay = 1;
+            var overdueDays = (DateTime.UtcNow - house.ProtectionEndDate).TotalDays;
+            weeksWithoutPay = 1 + (overdueDays <= 0 ? 0 : (int)(overdueDays / 7));
         }
+        var weeksPrepay = WeeksPrepaid(house);
 
         // Logger.Debug($"SCHouseTaxInfoPacket; tlId:{house.TlId}, domTaxRate: 0, deposit: {depositTax}, taxDue:{totalTaxAmountDue}, protectEnd:{house.ProtectionEndDate}, isPaid:{requiresPayment}, weeksWithoutPay:{weeksWithoutPay}, isHeavy:{house.Template.HeavyTax}");
 
@@ -657,16 +697,155 @@ public class HousingManager(
                 (ulong)depositTax, // shown in the (?) help text as this building's deposit tax
                 (ulong)totalTaxAmountDue, // Amount Due
                 house.ProtectionEndDate,
-                requiresPayment,
-                (sbyte)weeksWithoutPay,  // TODO: do proper calculation ?
-                0,  // TODO(v10): weeksPrepay — prepayment is not modelled
+                !requiresPayment, // Fix: slot is isAlreadyPaid
+                (sbyte)weeksWithoutPay,
+                (byte)weeksPrepay,   // Fix: banked prepaid weeks (was hardcoded 0) — prepayment is not modelled
                 house.Template.HeavyTax,
-                0   // TODO(v10): taxType — the binary leaves the enum unnamed
+                (byte)(FeaturesManager.Fsets.TaxItem ? 1 : 0)   // Fix: 1=HOUSING_TAX_SEAL, was 0=contribution path — the binary leaves the enum unnamed
             )
         );
     }
 
     /// <summary>
+    /// Townhall Region tab: residency + balance for a zone group. The client keeps a
+    /// resident map keyed by zone group that only server packets fill; an empty map reads
+    /// as Outsider everywhere, so these answers are the residency feed itself.
+    /// </summary>
+    public void ResidentInfo(GameConnection connection, short zoneGroup)
+    {
+        var character = connection.ActiveChar;
+        if (character == null)
+            return;
+        SendTownhallState(connection, zoneGroup);
+    }
+
+    /// <summary>
+    /// Townhall Residents tab: real member rows on SC 0x3C plus the shared state.
+    /// </summary>
+    public void ResidentMembers(GameConnection connection, short zoneGroup)
+    {
+        var character = connection.ActiveChar;
+        if (character == null)
+            return;
+        SendTownhallState(connection, zoneGroup);
+        var owners = new HashSet<uint>();
+        foreach (var house in _houses.Values)
+        {
+            if (house.OwnerId == 0)
+                continue;
+            if (zoneManager.GetZoneByKey(house.Transform.ZoneId)?.GroupId == zoneGroup)
+                owners.Add(house.OwnerId);
+        }
+        var rows = new List<ResidentMemberRow>();
+        foreach (var ownerId in owners)
+        {
+            var owner = WorldManager.Instance.GetCharacterById(ownerId);
+            rows.Add(new ResidentMemberRow(
+                0, // TODO: service points are not modelled server-side yet
+                DateTime.UtcNow,
+                ownerId,
+                owner?.Name ?? NameManager.Instance.GetCharacterName(ownerId) ?? string.Empty,
+                owner?.Level ?? (byte)0,
+                owner?.HeirLevel ?? (byte)0,
+                owner?.Expedition != null ? 1u : 0u,
+                owner is { IsOnline: true },
+                false)); // TODO: party membership
+        }
+        character.SendPacket(new SCResidentMemberListPacket(zoneGroup, (uint)owners.Count, rows));
+    }
+
+    /// <summary>
+    /// Townhall balance/charge queries.
+    /// </summary>
+    public void ResidentBalance(GameConnection connection, short zoneGroup, ulong type2)
+    {
+        var character = connection.ActiveChar;
+        if (character == null)
+            return;
+        SendTownhallState(connection, zoneGroup);
+    }
+
+    /// <summary>
+    /// One answer for every townhall trigger: the Region tab sends no request of its
+    /// own (0x01D never arrives), so every other trigger replays the full set.
+    /// </summary>
+    /// <summary>
+    /// Resident-map feed: one 0x37 per zone group the character owns houses in. The
+    /// client's isResident is a map-contains-group lookup, so without these the
+    /// townhall reads Outsider. Called on world entry and on every townhall trigger.
+    /// </summary>
+    public void SendResidentMap(GameConnection connection, uint characterId)
+    {
+        var character = connection.ActiveChar;
+        if (character == null)
+            return;
+        var groups = new HashSet<uint>();
+        foreach (var house in _houses.Values)
+        {
+            if (house.OwnerId != characterId)
+                continue;
+            var zone = zoneManager.GetZoneByKey(house.Transform.ZoneId);
+            if (zone != null)
+                groups.Add(zone.GroupId);
+        }
+        foreach (var groupId in groups)
+            character.SendPacket(new SCResidentMapPacket((short)groupId));
+        foreach (var groupId in groups)
+            character.SendPacket(new SCResidentInfoOptionPacket((short)groupId, 1));
+    }
+
+    public void SendTownhallState(GameConnection connection, short zoneGroup)
+    {
+        var character = connection.ActiveChar;
+        if (character == null)
+            return;
+        SendResidentMap(connection, character.Id);
+        character.SendPacket(new SCResidentInfoPacket(zoneGroup, 0, 0));
+        character.SendPacket(new SCResidentBalanceInfoPacket(zoneGroup, 0, GetResidentCount(zoneGroup), 0, 0, 0, 0));
+    }
+
+    private uint GetResidentCount(int zoneGroup)
+    {
+        var owners = new HashSet<uint>();
+        foreach (var house in _houses.Values)
+        {
+            if (house.OwnerId == 0)
+                continue;
+            if (zoneManager.GetZoneByKey(house.Transform.ZoneId)?.GroupId == zoneGroup)
+                owners.Add(house.OwnerId);
+        }
+        return (uint)owners.Count;
+    }
+
+    /// <summary>
+    /// Townhall Sales tab: every public listing in the zone group, sent as
+    /// SCHouseTradeListPacket (0x2F7).
+    /// </summary>
+    public void HousingTradeList(GameConnection connection, short zoneGroup)
+    {
+        var character = connection.ActiveChar;
+        if (character == null)
+            return;
+        var rows = new List<House>();
+        foreach (var house in _houses.Values)
+        {
+            if (house.SellPrice <= 0 || house.OwnerId == 0 || !house.SellPublic)
+                continue;
+            if (zoneManager.GetZoneByKey(house.Transform.ZoneId)?.GroupId == zoneGroup)
+                rows.Add(house);
+        }
+        SendTownhallState(connection, zoneGroup);
+        character.SendPacket(new SCHouseTradeListPacket(rows));
+    }
+
+
+    /// <summary>
+    /// Proactively pushes the guild residence's real TlId to one character via the same
+    /// SCHouseTaxInfoPacket the client's own on-demand request would get. The client's cached "which
+    /// house is my guild residence" id starts at 0 with no client-side way to set it, and its own
+    /// request for one asks using that same starting-at-0 value - so the loop never closes on its own.
+    /// The server must push the correct id unprompted at least once: on placement, and again at login
+    /// for members who weren't online when it was placed.
     /// Pushes the guild residence's TlId to one character with the same SCHouseTaxInfoPacket the
     /// client's own request would receive. The client's "do I have a guild residence" value
     /// (X2Faction:GetExpeditionHouseId) starts at 0 and is only populated by an incoming
@@ -704,6 +883,15 @@ public class HousingManager(
     public void Build(GameConnection connection, uint designId, float posX, float posY, float posZ, float zRot,
         ulong itemId, bool autoUseAaPoint)
     {
+        // Free accounts are not grade 0 (premium_grades grants grade 1 at zero points), so the
+        // gate must ask whether the account is actually paid.
+        if (!AccountPatron.IsPaid(connection.ActiveChar))
+        {
+            Logger.Debug("Build refused: design {0} needs patron", designId);
+            connection.ActiveChar.SendErrorMessage(ErrorMessageType.HouseCannotCreate);
+            return;
+        }
+
         var sourceDesignItem = connection.ActiveChar.Inventory.GetItemById(itemId);
         if (sourceDesignItem == null || sourceDesignItem.OwnerId != connection.ActiveChar.Id)
         {
@@ -1051,6 +1239,8 @@ public class HousingManager(
 
             // Mark it as expired protection
             house.ProtectionEndDate = DateTime.UtcNow.AddSeconds(-1);
+            // The removal debuff (buff 2250) now deals the damage; UpdateTaxInfo applies it below,
+            // and ApplyDemolitionTick starts the wreck shell once the last tick lands.
             // Make sure to call UpdateTaxInfo first to remove tax-rated mails of this house
             UpdateTaxInfo(house);
             // Return items to player by mail
@@ -1202,19 +1392,82 @@ public class HousingManager(
                 normalHouseCount++;
         }
 
-        // Default Heavy Tax formula for 1.2
-        var taxMultiplier = (heavyHouseCount < MaxHeavyTaxCounted ? heavyHouseCount : MaxHeavyTaxCounted) * 0.5f;
-        // If less than 3 properties, or not a heavy tax property, no extra multiplier needed
-        if (heavyHouseCount < 3 || newHouseTemplate.HeavyTax == false)
-            taxMultiplier = 1f;
+        // Fix: 10.x heavy tax from the heavy_taxes table (largest count <= owned).
+        // Only heavy-tax properties scale, and only from the 3rd heavy property up.
+        var baseTax = (int)(newHouseTemplate.Taxation?.Tax ?? 0);
+        var weeklyTax = baseTax;
+        if (newHouseTemplate.HeavyTax && heavyHouseCount >= 3)
+            weeklyTax = HeavyTaxRules.WeeklyTax((uint)baseTax, heavyHouseCount);
 
-        totalTaxToPay = oneWeekTaxCount = (int)Math.Ceiling(newHouseTemplate.Taxation.Tax * taxMultiplier);
+        totalTaxToPay = oneWeekTaxCount = weeklyTax;
 
-        // If this is a new house, add the deposit (base tax * 2)
+        // Deposit is two weeks of the (possibly scaled) weekly tax
         if (buildingNewHouse)
-            totalTaxToPay += (int)(newHouseTemplate.Taxation.Tax * 2);
+            totalTaxToPay += weeklyTax * 2;
 
         return true;
+    }
+
+
+    /// <summary>
+    /// Damage dealt each time the house removal debuff (buff 2250) ticks (15s in client data).
+    /// That debuff is self-cast (caster == owner == the house), which <see cref="BaseUnit.CanAttack"/>
+    /// rejects for a self-target, so DamageEffect routes the tick here instead of through CanAttack.
+    /// Damage is a percentage of the house's own MaxHp, so small and large houses wreck in the same time.
+    /// </summary>
+    public void ApplyDemolitionTick(House house, BaseUnit caster, int authoredDamage)
+    {
+        if (house?.Template == null || house.Hp <= 0)
+            return;
+
+        var world = AppConfiguration.Instance.World;
+        var damage = world.DemolitionTickDamageMode == DemolitionTickDamageMode.Percent
+            ? Math.Max(1, (int)Math.Ceiling(house.MaxHp * world.DemolitionTickDamagePercent / 100.0))
+            : Math.Max(1, authoredDamage);
+
+        if (house.Hp - damage > 0)
+        {
+            house.ReduceCurrentHp(caster, damage);
+            return;
+        }
+
+        // Final tick: structurally dead. Keep the shell standing for the wreck window instead of
+        // letting the death event remove the house the moment HP reaches zero.
+        _wreckedHouses[house.Id] = DateTime.UtcNow;
+        SetHouseHp(house, 0);
+        Logger.Info($"Demolition: house {house.Id} ({house.Name}) wrecked, removing in {SecondsForDemolitionWreck}s");
+    }
+
+    /// <summary>Removes houses whose wreck shell has stood for <see cref="SecondsForDemolitionWreck"/>.</summary>
+    private void TickDemolitionShell()
+    {
+        if (_wreckedHouses.Count == 0)
+            return;
+
+        foreach (var (id, wreckedUtc) in _wreckedHouses.ToList())
+        {
+            if (!_houses.TryGetValue(id, out var house))
+            {
+                _wreckedHouses.Remove(id);
+                continue;
+            }
+
+            if ((DateTime.UtcNow - wreckedUtc).TotalSeconds < SecondsForDemolitionWreck)
+                continue;
+
+            Logger.Info($"Demolition: removing wrecked house {house.Id} ({house.Name})");
+            RemoveDeadHouse(house);
+            _wreckedHouses.Remove(id);
+        }
+    }
+
+    private static void SetHouseHp(House house, int hp)
+    {
+        if (house.Hp == hp)
+            return;
+
+        house.Hp = hp;
+        house.BroadcastPacket(new SCUnitPointsPacket(house.ObjId, house.Hp, house.Mp), true);
     }
 
     /// <summary>
@@ -1275,6 +1528,18 @@ public class HousingManager(
     }
 
     /// <summary>
+    /// Whole prepaid weeks banked beyond the current tax period (client weeksPrepay).
+    /// A freshly placed house reports 0.
+    /// </summary>
+    private static int WeeksPrepaid(House house)
+    {
+        var extra = (house.ProtectionEndDate - DateTime.UtcNow).TotalDays - AppConfiguration.Instance.World.DaysForTaxPayment;
+        if (extra <= 0)
+            return 0;
+        return (int)(extra / 7);
+    }
+
+    /// <summary>
     /// Pays one configured tax period before it is due. The request is keyed by the housing
     /// timeline ID, never by a client-supplied house database or object ID.
     /// </summary>
@@ -1283,6 +1548,33 @@ public class HousingManager(
         var character = connection.ActiveChar;
         if (character == null || !_housesTl.TryGetValue(tlId, out var house) || house.OwnerId != character.Id)
             return false;
+        if (!AccountPatron.IsPaid(character))
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+
+        // Fix: mirror the client prepay gates (unpaid, for sale, under construction, prepaid cap)
+        if (house.TaxDueDate <= DateTime.UtcNow)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        if (house.SellPrice > 0)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        if (house.CurrentStep != -1)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        if (WeeksPrepaid(house) >= MaxPrepaidWeeks)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
 
         if (!CalculateBuildingTaxInfo(
                 house.AccountId, house.Template, false,
@@ -1671,9 +1963,13 @@ public class HousingManager(
     /// <returns></returns>
     private static int CalculateSaleCertifcates(House house, uint salePrice)
     {
-        // NOTE: In earlier AA, you need 1 appraisal certificate for every 100 gold of sales price
-        // TODO: In later versions, this depends on the building-type/size
-        var certAmount = (int)Math.Ceiling(salePrice / CopperPerCertificate);
+        // Fix: 10.x appraisal seals scale with price from the template seal_count
+        // (taxations.seal_count); the client shows the same need via GetHouseSaleItemInfo.
+        var baseTax = house?.Template?.Taxation?.Tax ?? 0;
+        var sealCount = house?.Template?.Taxation?.SealCount ?? 1;
+        if (baseTax <= 0 || salePrice <= 0)
+            return Math.Max(1, (int)sealCount);
+        var certAmount = (int)sealCount;
         if (certAmount < 1)
             certAmount = 1;
         return certAmount;
@@ -1684,6 +1980,18 @@ public class HousingManager(
     /// </summary>
     /// <param name="house"></param>
     /// <param name="isForSale"></param>
+    /// <summary>
+    /// Writes the house row immediately. Sale transitions must not wait for the periodic
+    /// tick or a graceful shutdown (same reason as DominionManager.SaveLodestoneNow).
+    /// </summary>
+    private static void SaveHouseNow(House house)
+    {
+        using var connection = MySQL.CreateConnection();
+        using var transaction = connection.BeginTransaction();
+        house.Save(connection, transaction);
+        transaction.Commit();
+    }
+
     private void SetForSaleMarkers(House house, bool isForSale)
     {
         var world = house.ParentWorld;
@@ -1694,6 +2002,7 @@ public class HousingManager(
         }
         if (isForSale)
         {
+            var radius = house.Template?.GardenRadius ?? 0f;
             for (var postId = 0; postId < 4; postId++)
             {
                 var xMultiplier = postId % 2 == 0 ? -1 : 1f;
@@ -1703,18 +2012,19 @@ public class HousingManager(
                 var doodad = doodadManager.Create(house.ParentWorld,  0, ForSaleMarkerDoodadId, null, true);
                 // location
                 doodad.Transform.Local.SetPosition(
-                    // 10.0.2.13: GardenRadius removed; was mocked to 0f
-                    0f * xMultiplier + house.Transform.World.Position.X,
-                    0f * yMultiplier + house.Transform.World.Position.Y,
+                    // 10.x: plot corner from housing_sizes.garden_radius (axis-aligned; TODO rotate by yaw)
+                    radius * xMultiplier + house.Transform.World.Position.X,
+                    radius * yMultiplier + house.Transform.World.Position.Y,
                     +house.Transform.World.Position.Z);
                 // adjust height to the floor
                 doodad.Transform.Local.SetHeight(doodad.ParentWorld.Template.GeoData.GetHeight(doodad.Transform.World.Position));// worldManager.GetHeight(doodad.Transform)));
                 doodad.Transform.Local.SetZRotation(zRot);
                 //doodad.Transform.WorldId = world.Template.Id;
                 doodad.Transform.InstanceId = world.Id;
+                doodad.Transform.ZoneId = house.Transform?.ZoneId ?? 0; // Fix: zone-stamp markers (was 0, zone binary dropped them)
                 doodad.ItemTemplateId = 0; // designId;
                 doodad.ItemId = 0;
-                doodad.OwnerId = 0;
+                doodad.OwnerId = house.OwnerId; // Fix: attribute markers so load resolves creator faction
                 doodad.ParentObjId = 0;
                 doodad.ParentObj = null;
                 doodad.UccId = 0;
@@ -1722,9 +2032,11 @@ public class HousingManager(
                 doodad.OwnerType = DoodadOwnerType.Housing;
                 doodad.OwnerDbId = house.Id;
                 doodadManager.RefreshFaction(doodad, null, house);
+                doodad.IsPersistent = true;
                 doodad.InitDoodad();
 
                 doodad.Spawn();
+                doodad.Save(); // Fix: persist sale markers across restarts like bound doodads
             }
         }
         else
@@ -1734,7 +2046,6 @@ public class HousingManager(
             for (var c = thisHouseSalePosts.Count - 1; c >= 0; c--)
             {
                 var doodad = thisHouseSalePosts[c];
-                // If it's a for sale sign, remove it
                 if (doodad.TemplateId == ForSaleMarkerDoodadId)
                 {
                     house.AttachedDoodads.Remove(doodad);
@@ -1745,6 +2056,18 @@ public class HousingManager(
     }
 
     /// <summary>
+    /// Returns management titles to a seller when a listing could not be persisted.
+    /// </summary>
+    private static void RefundSaleTitles(Character seller, int amount)
+    {
+        if (seller == null || amount <= 0)
+            return;
+
+        if (!seller.Inventory.Bag.AcquireDefaultItemEx(ItemTaskType.BuyHouse, Item.BuildingManagementTitle, amount, -1, out _, out _, 0))
+            Logger.Warn("SetForSale: failed to return {0} management title(s) to {1}", amount, seller.Name);
+    }
+
+    /// <summary>
     /// Puts up a house for sale
     /// </summary>
     /// <param name="house"></param>
@@ -1752,13 +2075,41 @@ public class HousingManager(
     /// <param name="buyerId">Use CharacterId for selling to a specific person</param>
     /// <param name="seller">Current owner of the property (needed to manipulate inventory)</param>
     /// <returns></returns>
-    public bool SetForSale(House house, uint price, uint buyerId, Character seller)
+    public bool SetForSale(House house, uint price, uint buyerId, Character seller, bool isPublic = true)
     {
         if (house == null)
             return false;
 
-        if (!house.Template.IsSellable)
+        if (seller != null && house.OwnerId != seller.Id)
+        {
+            seller.SendErrorMessage(ErrorMessageType.HouseCannotSellAsNotOwner);
             return false;
+        }
+        if (seller != null && !AccountPatron.IsPaid(seller))
+        {
+            seller.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        if (!house.Template.IsSellable)
+        {
+            seller?.SendErrorMessage(ErrorMessageType.HouseCannotSellAsType);
+            return false;
+        }
+        if (house.CurrentStep != -1)
+        {
+            seller?.SendErrorMessage(ErrorMessageType.HouseCannotSellAsUnderConstruction);
+            return false;
+        }
+        if (house.TaxDueDate <= DateTime.UtcNow)
+        {
+            seller?.SendErrorMessage(ErrorMessageType.HouseCannotSellAsDelayedTax);
+            return false;
+        }
+        if (house.SellPrice > 0)
+        {
+            seller?.SendErrorMessage(ErrorMessageType.HouseCannotSellAsAlreadyForSale);
+            return false;
+        }
 
         // Check if buyer exists (we just check if the name exists)
         var buyerName = nameManager.GetCharacterName(buyerId);
@@ -1767,27 +2118,202 @@ public class HousingManager(
 
         buyerName ??= "";
 
-        // Using the GM command does not send the seller (uses null), and thus will not require certificates
+        if (buyerId != 0 && buyerId == house.OwnerId)
+        {
+            seller?.SendErrorMessage(ErrorMessageType.HouseCannotSellToOneself);
+            return false;
+        }
+
+        if (!SalePriceRules.IsListablePrice(price))
+        {
+            // Mirrors the auction escrow cap; no too-high enum exists on this wire
+            seller?.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+
+        // Using the GM command does not send the seller (uses null), and thus will not require certificates.
+        // Pre-check the cost so an unaffordable seller never reaches the durable writes below.
+        var certAmount = 0;
         if (seller != null)
         {
-            var certAmount = CalculateSaleCertifcates(house, price);
-            if (seller.Inventory.Bag.ConsumeItem(ItemTaskType.BuyHouse, Item.AppraisalCertificate, certAmount, null) != certAmount)
+            certAmount = CalculateSaleCertifcates(house, price);
+            if (seller.Inventory.GetItemsCount(SlotType.Inventory, Item.BuildingManagementTitle) < certAmount)
             {
                 seller.SendErrorMessage(ErrorMessageType.HouseCannotSellAsNotEnoughSeal);
                 return false;
             }
         }
 
-        house.SellPrice = price;
-        house.SellToPlayerId = buyerId;
+        // One World snapshot writes the house row and the deducted titles in the same transaction
+        // (SaveManager saves houses and items together), so the listing and the charge cannot diverge.
+        var flushed = false;
+        using (WorldSnapshotCommit.Begin(bypassCharges: false))
+        {
+            house.SellPrice = price;
+            house.SellToPlayerId = buyerId;
+            house.SellPublic = isPublic;
+            SetForSaleMarkers(house, true);
 
-        house.BroadcastPacket(new SCHouseSetForSalePacket(house.TlId, price, house.SellToPlayerId, buyerName), false);
-        SetForSaleMarkers(house, true);
+            var consumedTitles = 0;
+            if (certAmount > 0)
+                consumedTitles = seller.Inventory.Bag.ConsumeItem(ItemTaskType.BuyHouse, Item.BuildingManagementTitle, certAmount, null);
 
+            if (certAmount > 0 && consumedTitles != certAmount)
+            {
+                // Under-billed: give back whatever was taken and bail out before the flush.
+                RefundSaleTitles(seller, consumedTitles);
+                house.SellPrice = 0;
+                house.SellToPlayerId = 0;
+                house.SellPublic = true;
+                SetForSaleMarkers(house, false);
+                seller.SendErrorMessage(ErrorMessageType.HouseCannotSellAsNotEnoughSeal);
+                return false;
+            }
+
+            // Run the compensation through the flush callback so it happens while the save lock is
+            // still held - a failed snapshot must not leave the titles spent and the listing gone.
+            // RequestFlush first: FlushNow is a no-op unless a flush was asked for, and the
+            // callback above could then never run.
+            WorldSnapshotCommit.RequestFlush(bypassCharges: false);
+            flushed = WorldSnapshotCommit.FlushNow(bypassCharges: false, onFailed: () =>
+            {
+                RefundSaleTitles(seller, certAmount);
+                house.SellPrice = 0;
+                house.SellToPlayerId = 0;
+                house.SellPublic = true;
+                SetForSaleMarkers(house, false);
+            });
+        }
+
+        // Take FlushNow's own result: disposing the scope above overwrites the last status with
+        // Saved, so AcceptedLast on its own still reports success after a failed flush.
+        if (!flushed || !WorldSnapshotCommit.AcceptedLast(bypassCharges: false, failNextPersist: false))
+        {
+            // The snapshot did not commit and the callback already restored the titles.
+            Logger.Warn("SetForSale: snapshot rejected for house {0}, listing rolled back", house.Id);
+            house.BroadcastPacket(new SCHouseResetForSalePacket(house.TlId, house.Name), false);
+            seller?.SendErrorMessage(ErrorMessageType.HouseCannotSellAsNotEnoughSeal);
+            return false;
+        }
+
+        house.BroadcastPacket(new SCHouseSetForSalePacket(house.TlId, price, house.SellToPlayerId, buyerName, house.Name), false);
         return true;
     }
 
-    public bool SetForSale(ushort houseTlId, uint price, uint buyerId, Character seller) => SetForSale(GetHouseByTlId(houseTlId), price, buyerId, seller);
+    public bool SetForSale(ushort houseTlId, uint price, uint buyerId, Character seller, bool isPublic = true) => SetForSale(GetHouseByTlId(houseTlId), price, buyerId, seller, isPublic);
+
+    /// <summary>
+    /// Rotate Building confirm (CS 0x1A0): bc u24 house objId + zRot + height.
+    /// Mirrors the client gates (owner, not on sale, tax current, in range, rotate cost).
+    /// </summary>
+    public bool RotateHouse(GameConnection connection, uint bc, float zRot, float height)
+    {
+        var character = connection.ActiveChar;
+        if (character == null)
+            return false;
+        // Client-supplied floats: reject non-finite input outright, and normalise the yaw.
+        if (!float.IsFinite(zRot) || !float.IsFinite(height))
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        zRot %= 360f;
+        if (zRot < 0f)
+            zRot += 360f;
+        House rotateHouse = null;
+        foreach (var h in _houses.Values)
+        {
+            if (h.ObjId == bc)
+            {
+                rotateHouse = h;
+                break;
+            }
+        }
+        if (rotateHouse == null || rotateHouse.OwnerId != character.Id)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        if (rotateHouse.SellPrice > 0)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        if (rotateHouse.ProtectionEndDate <= DateTime.UtcNow)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        var hp = rotateHouse.Transform.World.Position;
+        var cp = character.Transform.World.Position;
+        var dx = cp.X - hp.X;
+        var dy = cp.Y - hp.Y;
+        var dz = cp.Z - hp.Z;
+        var maxDist = (rotateHouse.Template?.GardenRadius ?? 0f) + 30f;
+        if (dx * dx + dy * dy + dz * dz > maxDist * maxDist)
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+        var rotateItemId = rotateHouse.Template?.RotateItemId ?? 0;
+        var rotateItemCount = rotateHouse.Template?.RotateItemCount ?? 0;
+
+        // The charge and the rotation commit together: one World snapshot writes the house row and
+        // the consumed item, and a failure puts both back while the save lock is still held.
+        var originalRotation = rotateHouse.Transform.Local.Rotation;
+        var originalPosition = rotateHouse.Transform.Local.Position;
+        var flushed = false;
+        using (WorldSnapshotCommit.Begin(bypassCharges: false))
+        {
+            if (rotateItemId > 0 && rotateItemCount > 0)
+            {
+                // Check the count first: ConsumeItem releases whatever the bag has even when it is
+                // short, and returning here without a refund would eat the partial charge.
+                if (character.Inventory.GetItemsCount(SlotType.Inventory, rotateItemId) < (int)rotateItemCount)
+                {
+                    character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+                    return false;
+                }
+
+                var taken = character.Inventory.Bag.ConsumeItem(ItemTaskType.HouseBuilding, rotateItemId, (int)rotateItemCount, null);
+                if (taken != (int)rotateItemCount)
+                {
+                    if (taken > 0)
+                        character.Inventory.Bag.AcquireDefaultItemEx(ItemTaskType.HouseBuilding, rotateItemId, taken, -1, out _, out _, 0);
+                    character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+                    return false;
+                }
+            }
+
+            // Keep the plot's own elevation - the client's height is only a confirmation of it,
+            // never an authoritative placement (unbounded values would corrupt the saved transform).
+            rotateHouse.Transform.Local.SetPosition(hp.X, hp.Y, hp.Z);
+            rotateHouse.Transform.Local.SetRotation(0, 0, zRot);
+            rotateHouse.IsDirty = true;
+
+            // RequestFlush first, or FlushNow reports success without writing (see SetForSale).
+            WorldSnapshotCommit.RequestFlush(bypassCharges: false);
+            flushed = WorldSnapshotCommit.FlushNow(bypassCharges: false, onFailed: () =>
+            {
+                rotateHouse.Transform.Local.SetPosition(originalPosition.X, originalPosition.Y, originalPosition.Z);
+                rotateHouse.Transform.Local.SetRotation(originalRotation.X, originalRotation.Y, originalRotation.Z);
+                rotateHouse.IsDirty = true;
+                if (rotateItemId > 0 && rotateItemCount > 0 &&
+                    !character.Inventory.Bag.AcquireDefaultItemEx(ItemTaskType.HouseBuilding, rotateItemId, (int)rotateItemCount, -1, out _, out _, 0))
+                    Logger.Warn("RotateHouse: failed to return {0} x{1} to {2}", rotateItemId, rotateItemCount, character.Name);
+            });
+        }
+
+        // FlushNow's own result, because the scope's dispose overwrites the last status with Saved.
+        if (!flushed || !WorldSnapshotCommit.AcceptedLast(bypassCharges: false, failNextPersist: false))
+        {
+            character.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return false;
+        }
+
+        rotateHouse.BroadcastPacket(new SCHouseRotatedPacket(rotateHouse.ObjId, zRot), false);
+        return true;
+    }
 
     /// <summary>
     /// Cancels a sale
@@ -1798,17 +2324,24 @@ public class HousingManager(
     public bool CancelForSale(House house, bool returnCertificates = true)
     {
         if (house.SellPrice <= 0)
+        {
+            // Fix: idempotent recovery, client sale cache can stick, always emit clear-signal
+            house.BroadcastPacket(new SCHouseResetForSalePacket(house.TlId, house.Name), false);
+            SetForSaleMarkers(house, false);
+        SaveHouseNow(house);
             return true;
+        }
         var certAmount = CalculateSaleCertifcates(house, house.SellPrice);
         var owner = worldManager.GetCharacterById(house.OwnerId);
 
         house.SellPrice = 0;
         house.SellToPlayerId = 0;
+        house.SellPublic = true;
         // Can only return certificates if owner is online and is the one resetting the sale
         if (certAmount > 0 && returnCertificates && owner != null)
         {
             if (owner.Inventory.MailAttachments.AcquireDefaultItemEx(ItemTaskType.Invalid,
-                Item.AppraisalCertificate, certAmount, -1, out var addedItems, out _, 0))
+                Item.BuildingManagementTitle, certAmount, -1, out var addedItems, out _, 0))
             {
                 // Mail container is set up to never update existing items, so we can discard that result
                 var mail = new BaseMail
@@ -1823,7 +2356,7 @@ public class HousingManager(
                     Title = "title(" + zoneManager.GetZoneByKey(house.Transform.ZoneId)?.GroupId.ToString() + ",'" + house.Name + "')",
                     Body =
                     {
-                        Text = "body('" + house.Name + "', " + Item.AppraisalCertificate.ToString() + ", " + certAmount.ToString() + ")"
+                        Text = "body('" + house.Name + "', " + Item.BuildingManagementTitle.ToString() + ", " + certAmount.ToString() + ")"
                     }
                 };
                 mail.Body.Attachments.AddRange(addedItems);
@@ -1841,6 +2374,7 @@ public class HousingManager(
 
         house.BroadcastPacket(new SCHouseResetForSalePacket(house.TlId, house.Name), false);
         SetForSaleMarkers(house, false);
+        SaveHouseNow(house);
 
         return true;
     }
@@ -1973,6 +2507,7 @@ public class HousingManager(
         house.SellPrice = 0;
         house.SellToPlayerId = 0;
         house.AccountId = character.AccountId;
+        house.SellPublic = true;
         house.OwnerId = character.Id;
         house.CoOwnerId = character.Id; // not entirely sure if this actually needs to change
         house.Permission = house.Template.AlwaysPublic ? HousingPermission.Public : HousingPermission.Private;
@@ -1990,6 +2525,7 @@ public class HousingManager(
                 house.Name), false);
 
         SetForSaleMarkers(house, false);
+        SaveHouseNow(house);
 
         character.SendPacket(new SCHouseDataPacket([house]));
         var oldOwner = worldManager.GetCharacterById(previousOwner);
@@ -2017,7 +2553,8 @@ public class HousingManager(
             var expiredHouseList = new List<House>();
             foreach (var house in _houses)
             {
-                if (house.Value?.ProtectionEndDate <= DateTime.UtcNow && house.Value?.OwnerId > 0)
+                if (house.Value?.ProtectionEndDate <= DateTime.UtcNow && house.Value?.OwnerId > 0
+                    && !_wreckedHouses.ContainsKey(house.Key))
                     expiredHouseList.Add(house.Value);
                 UpdateTaxInfo(house.Value);
             }
@@ -2025,6 +2562,8 @@ public class HousingManager(
             {
                 Demolish(null, house, true, false);
             }
+
+            TickDemolitionShell();
         }
         catch (Exception e)
         {
@@ -2158,8 +2697,8 @@ public class HousingManager(
         foreach (var h in _houses)
         {
             var house = h.Value;
-            // 10.0.2.13: GardenRadius removed; was mocked to 0f
-            var r = 0f;
+            // 10.x: plot bounds from housing_sizes.garden_radius
+            var r = house.Template?.GardenRadius ?? 0f;
             var bounds = new RectangleF(house.Transform.World.Position.X - r, house.Transform.World.Position.Y - r,
                 r * 2f, r * 2f);
             if (bounds.Contains(x, y))
@@ -2168,3 +2707,6 @@ public class HousingManager(
         return null;
     }
 }
+
+
+

@@ -1,4 +1,4 @@
-﻿using AAEmu.Commons.Network;
+using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Models.Game;
@@ -9,10 +9,26 @@ public class CSSellHousePacket() : GamePacket(CSOffsets.CSSellHousePacket, 1)
 {
     public override void Read(PacketStream stream)
     {
+
+        // Fix: wire is u16 tl + u64 moneyAmount + string sellTo + bool isPublic
+        // (client serializer; was u32 + missing bool, which desynced sellTo/isPublic)
         var tl = stream.ReadUInt16();
-        var moneyAmount = stream.ReadUInt32();
-        var sellTo = stream.ReadString();
-        Logger.Debug("SellHouse, Tl: {0}, MoneyAmount: {1}, SellTo: {2}", tl, moneyAmount, sellTo);
+        var moneyAmount = stream.ReadUInt64();
+        string sellTo = string.Empty;
+        var isPublic = stream.Buffer[stream.Pos + stream.LeftBytes - 1] != 0;
+        if (stream.LeftBytes >= 4)
+        {
+            var nameLen = stream.Buffer[stream.Pos] | (stream.Buffer[stream.Pos + 1] << 8);
+            if (2 + nameLen + 1 == stream.LeftBytes)
+            {
+                stream.ReadUInt16();
+                sellTo = nameLen > 0 ? stream.ReadString(nameLen) : string.Empty;
+            }
+        }
+        while (stream.HasBytes)
+            stream.ReadByte();
+
+        Logger.Debug("SellHouse, Tl: {0}, MoneyAmount: {1}, SellTo: {2}, IsPublic: {3}", tl, moneyAmount, sellTo, isPublic);
 
         // Get buyer Id
         var sellToId = 0u;
@@ -27,9 +43,19 @@ public class CSSellHousePacket() : GamePacket(CSOffsets.CSSellHousePacket, 1)
             }
         }
 
+        if (moneyAmount > uint.MaxValue)
+        {
+            Connection.ActiveChar.SendErrorMessage(ErrorMessageType.InvalidHouseInfo);
+            return;
+        }
         if (moneyAmount > 0)
-            HousingManager.Instance.SetForSale(tl, moneyAmount, sellToId, Connection.ActiveChar);
+        {
+            // TODO(Phase 2): persist isPublic (sell_public column) for the property listing
+            HousingManager.Instance.SetForSale(tl, (uint)moneyAmount, sellToId, Connection.ActiveChar, isPublic);
+        }
         else
             HousingManager.Instance.CancelForSale(tl, true);
     }
 }
+
+

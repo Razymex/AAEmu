@@ -29,7 +29,7 @@ public class PremiumDetail : PacketMarshaler
     public override PacketStream Write(PacketStream stream)
     {
         stream.Write(CId);
-        stream.Write(CName);
+        stream.Write(CName ?? string.Empty);
         stream.Write(PId);
         stream.Write(IsSell);
         stream.Write(IsHidden);
@@ -44,3 +44,4 @@ public class PremiumDetail : PacketMarshaler
         return stream;
     }
 }
+

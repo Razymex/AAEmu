@@ -322,6 +322,9 @@ public class GameNetwork : Singleton<GameNetwork>
         RegisterPacket(CSOffsets.CSProtectSensitiveOperation, 1, typeof(CSProtectSensitiveOperation));
         RegisterPacket(CSOffsets.CSHeroAbstainPacket, 1, typeof(CSHeroAbstainPacket));
         RegisterPacket(CSOffsets.CSRebuildHouseTaxInfoPacket, 1, typeof(CSRebuildHouseTaxInfoPacket));
+        RegisterPacket(CSOffsets.CSHousingTradeListPacket, 1, typeof(CSHousingTradeListPacket));
+        RegisterPacket(CSOffsets.CSRotateHousePacket, 1, typeof(CSRotateHousePacket));
+        RegisterPacket(CSOffsets.CSHousingUccApplyPacket, 1, typeof(CSHousingUccApplyPacket));
         RegisterPacket(CSOffsets.CSInstantTimePacket, 1, typeof(CSInstantTimePacket));
         RegisterPacket(CSOffsets.CSHeroRankingListPacket, 1, typeof(CSHeroRankingListPacket));
         RegisterPacket(CSOffsets.CSQuizResponsePacket, 1, typeof(CSQuizResponsePacket));
@@ -383,6 +386,11 @@ public class GameNetwork : Singleton<GameNetwork>
         RegisterPacket(CSOffsets.CSExpeditionInterestUpatePacket, 1, typeof(CSExpeditionInterestUpatePacket));
         RegisterPacket(CSOffsets.CSShowResidentZoneGroupsPacket, 1, typeof(CSShowResidentZoneGroupsPacket));
         RegisterPacket(CSOffsets.CSResidentBalanceAllPacket, 1, typeof(CSResidentBalanceAllPacket));
+        RegisterPacket(CSOffsets.CSGetResidentInfoPacket, 1, typeof(CSGetResidentInfoPacket));
+        RegisterPacket(CSOffsets.CSShowResidentMembersPacket, 1, typeof(CSShowResidentMembersPacket));
+        RegisterPacket(CSOffsets.CSShowResidentChargeBalancePacket, 1, typeof(CSShowResidentChargeBalancePacket));
+        RegisterPacket(CSOffsets.CSAddResidentChargePacket, 1, typeof(CSAddResidentChargePacket));
+        RegisterPacket(CSOffsets.CSAddResidentServicePointPacket, 1, typeof(CSAddResidentServicePointPacket));
         RegisterPacket(CSOffsets.CSFactionRelationHistoryGetPacket, 1, typeof(CSFactionRelationHistoryGetPacket));
         RegisterPacket(CSOffsets.CSFactionRelationCountGetPacket, 1, typeof(CSFactionRelationCountGetPacket));
         RegisterPacket(CSOffsets.CSExpeditionNoticeUpatePacket, 1, typeof(CSExpeditionNoticeUpatePacket));

@@ -20,7 +20,7 @@ public sealed class LoginClient(ILoginConnection connection, IOptions<AppConfigu
                 new AfsValue(
                     _characterSlots.CountLimit,
                     _characterSlots.MaxCountLimit,
-                    _characterSlots.WorldLimit)),
+                    _characterSlots.WorldLimit, PremiumEntrance: true, B2pService: true)),
             cancellationToken);
         await connection.SendPacketAsync(
             new ACAuthResponsePacket(accountId, _characterSlots.AvailableSlots), cancellationToken);
