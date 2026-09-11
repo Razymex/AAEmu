@@ -60,9 +60,19 @@ public static class QuestCinemaBindRules
     }
 
     /// <summary>
-    /// Dropped quests must not apply a deferred cinema skill or buff.
+    /// Abandoned quests must not apply a deferred cinema skill or buff.
+    /// Reward also calls DropQuest after the completed flag, and the film
+    /// is still playing — that complete still owns the post-scene effect.
     /// </summary>
-    public static bool ShouldApplyCinemaEndEffect(bool questStillActive) => questStillActive;
+    public static bool ShouldApplyCinemaEndEffect(bool questStillActive, bool questCompleted) =>
+        questStillActive || questCompleted;
+
+    /// <summary>
+    /// Complete uses the same DropQuest as abandon. Keep the pending cinema-end
+    /// until the film finishes. GM force-clear and abandon drop it.
+    /// </summary>
+    public static bool ShouldClearCinemaEndOnDrop(bool questCompleted, bool forcibly) =>
+        forcibly || !questCompleted;
 
     public static bool CinemaEndBelongsToQuest(uint pendingQuestId, uint droppedQuestId) =>
         droppedQuestId != 0 && pendingQuestId == droppedQuestId;

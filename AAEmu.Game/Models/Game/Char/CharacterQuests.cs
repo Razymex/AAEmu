@@ -117,12 +117,16 @@ public class CharacterQuests(Character owner)
                 pending.Component.BuffId);
 
             var questId = pending.Component.ParentQuestTemplate?.Id ?? 0;
-            if (questId != 0 &&
-                ActiveQuests.TryGetValue(questId, out var quest) &&
-                QuestCinemaBindRules.ShouldApplyCinemaEndEffect(true))
-            {
+            Quest quest = null;
+            var active = questId != 0 && ActiveQuests.TryGetValue(questId, out quest);
+            var completed = questId != 0 && HasQuestCompleted(questId);
+            if (!QuestCinemaBindRules.ShouldApplyCinemaEndEffect(active, completed))
+                continue;
+
+            if (quest != null)
                 quest.UseSkillAndBuff(pending.Component);
-            }
+            else
+                QuestComponentEffectRules.ApplySkillAndBuff(Owner, pending.Component, SkillManager.Instance);
         }
 
         if (applied == 0)
@@ -383,7 +387,8 @@ public class CharacterQuests(Character owner)
         quest.Cleanup();
         quest.Drop(update);
         quest.FinalizeQuestActs();
-        ClearCinemaEndEffects(questId);
+        if (QuestCinemaBindRules.ShouldClearCinemaEndOnDrop(HasQuestCompleted(questId), forcibly))
+            ClearCinemaEndEffects(questId);
         ActiveQuests.Remove(questId);
         _removed.Add(questId);
 

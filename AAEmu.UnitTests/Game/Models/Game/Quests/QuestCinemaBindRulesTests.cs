@@ -64,10 +64,19 @@ public class QuestCinemaBindRulesTests
     [Test]
     public async Task DroppedQuest_DoesNotApplyCinemaEnd()
     {
-        await Assert.That(QuestCinemaBindRules.ShouldApplyCinemaEndEffect(true)).IsTrue();
-        await Assert.That(QuestCinemaBindRules.ShouldApplyCinemaEndEffect(false)).IsFalse();
+        await Assert.That(QuestCinemaBindRules.ShouldApplyCinemaEndEffect(true, false)).IsTrue();
+        await Assert.That(QuestCinemaBindRules.ShouldApplyCinemaEndEffect(false, false)).IsFalse();
         await Assert.That(QuestCinemaBindRules.CinemaEndBelongsToQuest(3901, 3901)).IsTrue();
         await Assert.That(QuestCinemaBindRules.CinemaEndBelongsToQuest(3901, 2385)).IsFalse();
         await Assert.That(QuestCinemaBindRules.CinemaEndBelongsToQuest(0, 3901)).IsFalse();
+    }
+
+    [Test]
+    public async Task CompleteDuringFilm_KeepsTheCinemaEnd()
+    {
+        await Assert.That(QuestCinemaBindRules.ShouldApplyCinemaEndEffect(false, true)).IsTrue();
+        await Assert.That(QuestCinemaBindRules.ShouldClearCinemaEndOnDrop(true, false)).IsFalse();
+        await Assert.That(QuestCinemaBindRules.ShouldClearCinemaEndOnDrop(false, false)).IsTrue();
+        await Assert.That(QuestCinemaBindRules.ShouldClearCinemaEndOnDrop(true, true)).IsTrue();
     }
 }
