@@ -35,10 +35,22 @@ public class Plot
             var incomingHold = SportFishCombat.IsFishingHoldSkill(skill.Template.TargetType, incomingTags);
             var prevHold = prevSkill?.Template != null &&
                            SportFishCombat.IsFishingHoldSkill(prevSkill.Template.TargetType, prevTags);
-            if (SportFishCombat.ShouldCancelPreviousPlot(
+            var incomingCombo = skill.Template != null &&
+                                SkillCastOverlapRules.IsInstantComboHit(
+                                    skill.Template.CastingTime, skill.Template.CustomGcd);
+            var incomingSame = prevSkill != null && prevSkill.Id == skill.Id;
+            var previousIsFollowUp = prevSkill != null &&
+                                     SkillComboRules.IsComboFollowUpOf(
+                                         skill.Id, prevSkill.Id, SkillComboRules.NextFollowUp);
+            if (SkillCastOverlapRules.ShouldCancelPreviousPlot(
                     prev.IsCasting || prev.IsChanneling,
-                    prevHold,
-                    incomingHold))
+                    incomingCombo,
+                    incomingSame,
+                    SportFishCombat.ShouldCancelPreviousPlot(
+                        prev.IsCasting || prev.IsChanneling,
+                        prevHold,
+                        incomingHold),
+                    previousIsFollowUp))
                 prev.RequestCancellation();
         }
 

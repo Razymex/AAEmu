@@ -80,6 +80,12 @@ public partial class Character : Unit, ICharacter
     public bool MirrorNpcStreamReady { get; set; }
 
     /// <summary>
+    /// True once this session reached the world. A session that never got in (refused zone
+    /// entry, return to select) must not consume queued quest effects it could not deliver.
+    /// </summary>
+    public bool WorldEntryCompleted { get; set; }
+
+    /// <summary>
     /// Optional delay after Completed before first mirror UnitState (AAEMU_MIRROR_NPC_GRACE_MS).
     /// </summary>
     public long MirrorNpcStreamNotBeforeTick { get; set; }

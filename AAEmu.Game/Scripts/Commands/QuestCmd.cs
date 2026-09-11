@@ -17,7 +17,7 @@ public class QuestCmd : ICommand
 
     public string GetCommandLineHelp()
     {
-        return "<list||template||add||remove||step||prog||uncomplete||resetdaily||progress||objective>";
+        return "<list||template||add||remove||complete||step||prog||uncomplete||resetdaily||progress||objective>";
     }
 
     public string GetCommandHelpText()

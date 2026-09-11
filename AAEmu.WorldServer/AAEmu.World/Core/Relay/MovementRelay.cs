@@ -210,6 +210,29 @@ public class MovementRelay
     }
 
     /// <summary>Copies zone-owned NPC and mate positions onto their World mirrors.</summary>
+    private static bool ShouldSuppressIdleUnitMove(uint bcId, UnitMoveType move)
+    {
+        if (WorldIntegration.FindUnitAcrossWorlds(bcId) is not Unit unit ||
+            unit is not Npc && unit is not Mate)
+            return false;
+
+        var pos = unit.Transform?.World;
+        if (pos == null)
+            return false;
+
+        var (rx, ry, rz) = pos.ToRollPitchYawSBytesMovement();
+        var delta = move.DeltaMovement ?? [0, 0, 0];
+        return UnitIdleMoveRules.ShouldSuppress(
+            pos.Position.X, pos.Position.Y, pos.Position.Z,
+            rx, ry, rz,
+            move.X, move.Y, move.Z,
+            move.RotationX, move.RotationY, move.RotationZ,
+            move.VelX, move.VelY, move.VelZ,
+            delta.Length > 0 ? delta[0] : (sbyte)0,
+            delta.Length > 1 ? delta[1] : (sbyte)0,
+            delta.Length > 2 ? delta[2] : (sbyte)0);
+    }
+
     private static void ApplyCombatUnitPosition(uint bcId, UnitMoveType move, ZoneConnection source)
     {
         if (DisableHullPositionSync)
@@ -595,6 +618,10 @@ public class MovementRelay
                 {
                     // NPC / mate World mirrors lagged ZWUnitMovements so Skill.Use range and mate
                     // chase measured stale centers (TooFarRange 5–9 m). Hulls use ApplyHullPosition.
+                    // Idle stands (every unit, every tick when movement-skip is off) must not
+                    // rewrite Transform or hit SC — that is the plaza flicker with many zones up.
+                    if (ShouldSuppressIdleUnitMove(bcId, unitMove))
+                        continue;
                     ApplyCombatUnitPosition(bcId, unitMove, source);
                 }
 

@@ -270,16 +270,19 @@ public class UnitReqs
 
             case UnitReqsKindType.ProgressQuestContext:
                 return RetWithValue(SkillResultKeys.skill_urk_progress_quest_context, Value1,
-                    player?.Quests.ActiveQuests.GetValueOrDefault(Value1)?.Step == QuestComponentKind.Progress);
+                    QuestContextUnitReqRules.IsInProgress(
+                        player?.Quests.ActiveQuests.GetValueOrDefault(Value1)?.Status));
 
             case UnitReqsKindType.ReadyQuestContext:
                 return RetWithValue(SkillResultKeys.skill_urk_ready_quest_context, Value1,
                     player?.Quests.ActiveQuests.GetValueOrDefault(Value1)?.Step == QuestComponentKind.Ready);
 
             case UnitReqsKindType.TargetNpcGroup:
+                var groupTarget = targetUnit as Npc;
+                var inNpcGroup = groupTarget != null &&
+                    QuestManager.Instance.CheckGroupNpc(Value1, groupTarget.TemplateId);
                 return RetWithValue(SkillResultKeys.skill_urk_target_npc_group, Value1,
-                    targetUnit is Npc groupTarget &&
-                    QuestManager.Instance.CheckGroupNpc(Value1, groupTarget.TemplateId));
+                    UnitReqTargetNpcGroupRules.Passes(groupTarget != null, inNpcGroup, Value2));
 
             case UnitReqsKindType.AreaSphere:
                 // Check Sphere for Quest

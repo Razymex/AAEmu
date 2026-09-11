@@ -1318,10 +1318,23 @@ public static class WorldIntegration
                 return false;
             }
 
-            // Idempotent remirror (same bc). Multi-zone MUST NOT share bcIds — UnitRegistry
-            // allocates process-wide; a hit here is the same NPC re-announced, not a sibling zone.
-            if (world.GetNpc(bcId) != null || world.GetBaseUnit(bcId) != null)
-                return true;
+            // Same-zone re-announce is idempotent. A recycled id that still names another
+            // zone's unit (or a World-authored unit) must not steal that slot.
+            var existing = FindUnitAcrossWorlds(bcId);
+            if (existing != null)
+            {
+                var existingZoneId = existing.Transform?.ZoneId ?? 0;
+                var existingInstanceId = existing.Transform?.InstanceId ?? uint.MaxValue;
+                var isMirror = existing is Npc { IsZoneMirror: true };
+                if (ZoneMirrorIdRules.IsIdempotentRemirror(
+                        existingZoneId, existingInstanceId, isMirror, zoneId, instanceId))
+                    return true;
+
+                Logger.Warn(
+                    "MirrorZoneNpcSpawn: bc={0} already owned zone={1} instance={2} incoming zone={3} instance={4} tpl={5}",
+                    bcId, existingZoneId, existingInstanceId, zoneId, instanceId, templateId);
+                return false;
+            }
 
             var npc = NpcManager.Instance.Create(world, bcId, templateId);
             if (npc == null)

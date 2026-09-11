@@ -420,7 +420,7 @@ public class SphereGameData : Singleton<SphereGameData>, IGameDataLoader
     /// <summary>
     /// Checks if a position is inside the given SphereId
     /// </summary>
-    /// <param name="sphereId">Sphere Id as defined in a Quest Act</param>
+    /// <param name="sphereId">Compact <c>spheres.id</c> (quest_area_sphere.g <c>stype</c>)</param>
     /// <param name="value2">Unknown, always one except for skill 13305 (plant unidentified tree)</param>
     /// <param name="worldPosition"></param>
     /// <param name="requiredComponentId"></param>
@@ -430,20 +430,20 @@ public class SphereGameData : Singleton<SphereGameData>, IGameDataLoader
         if (!_spheres.TryGetValue(sphereId, out var dbSphere))
             return null;
 
-        if (dbSphere.SphereDetailType != "SphereQuest")
-            return null;
-
-        if (!_sphereQuests.TryGetValue(dbSphere.SphereDetailId, out var dbSphereQuest))
-            return null;
-
-        var pakDataSpheres = SphereQuestManager.GetSpheresForQuest(dbSphereQuest.QuestId);
-        foreach (var pakDataSphere in pakDataSpheres)
+        var areaAtPosition = SphereQuestManager.FindContainingQuestAreaSphere(sphereId, worldPosition);
+        IEnumerable<SphereQuest> signSpheres = [];
+        if (dbSphere.SphereDetailType == "SphereQuest" &&
+            _sphereQuests.TryGetValue(dbSphere.SphereDetailId, out var dbSphereQuest))
         {
-            if (pakDataSphere.Contains(worldPosition) && (requiredComponentId == 0 || pakDataSphere.ComponentId == requiredComponentId))
-                return pakDataSphere;
+            signSpheres = SphereQuestManager.GetSpheresForQuest(dbSphereQuest.QuestId);
         }
 
-        return null;
+        return AreaSphereHitRules.FindHit(
+            sphereId,
+            worldPosition,
+            requiredComponentId,
+            areaAtPosition == null ? [] : [areaAtPosition],
+            signSpheres);
     }
 
 }

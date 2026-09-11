@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -48,6 +48,8 @@ public class Skill
     private bool _bypassGcd;
     /// <summary>ZoneAuthority: avoid double WZSkillStarted (cast-time relays at Use, instant at Cast).</summary>
     private bool _zoneSkillStartedRelayed;
+    /// <summary>Plot-only GCD / cooldown armed at Use so hold-repeat cannot stack a new cast every 150 ms.</summary>
+    private bool _plotOnlyFireCostsApplied;
     private bool _zoneSkillFiredRelayed;
     private bool _zoneSkillEndedRelayed;
     private SkillCaster _zoneSkillCaster;
@@ -178,6 +180,7 @@ public class Skill
         _zoneSkillStartedRelayed = false;
         _zoneSkillFiredRelayed = false;
         _zoneSkillEndedRelayed = false;
+        _plotOnlyFireCostsApplied = false;
         _zoneSkillCaster = null;
         var skillTags = SkillManager.Instance.GetSkillTags(Template.Id);
         var fishingHold = character != null &&
@@ -194,23 +197,24 @@ public class Skill
                 if (Id == 2 || Id == 3 || Id == 4)
                     delay = character != null ? 100 : 1500;
 
-                if (!fishingHold && unit.SkillLastUsed.AddMilliseconds(delay) > DateTime.UtcNow)
+                // Instant combo hits skip the 150 ms anti-spam and must not write SkillLastUsed
+                // (that blocked the next parent press). They still wait for the shared GCD the
+                // first hit armed — the client starts them when that GCD is up.
+                var comboHit = SkillCastOverlapRules.BypassesSharedCastGate(Template.CastingTime, Template.CustomGcd);
+                if (!fishingHold && !comboHit && unit.SkillLastUsed.AddMilliseconds(delay) > DateTime.UtcNow)
                 {
                     Logger.Trace($"Skill: CooldownTime [{delay}]!");
                     return SkillResult.CooldownTime;
                 }
 
-                // Instant combo hits (e.g. Fireball 24894/24895 custom_gcd=10) must not be blocked by
-                // the parent's cast GCD — they fire at the same moment as plot cast-end.
-                var comboBypassGcd = fishingHold ||
-                    (Template.CastingTime <= 0 && Template.CustomGcd > 0 && Template.CustomGcd <= 50);
-                if (unit.GlobalCooldown >= DateTime.UtcNow && !Template.IgnoreGlobalCooldown && !comboBypassGcd)
+                if (unit.GlobalCooldown >= DateTime.UtcNow && !Template.IgnoreGlobalCooldown && !fishingHold)
                 {
                     Logger.Trace($"Skill: GlobalCooldown active for {Template.Id}");
                     return SkillResult.CooldownTime;
                 }
 
-                unit.SkillLastUsed = DateTime.UtcNow;
+                if (!comboHit)
+                    unit.SkillLastUsed = DateTime.UtcNow;
             }
         }
 
@@ -286,8 +290,14 @@ public class Skill
                 // (PlotNode → ApplyPlotOnlyFireCosts). Zone needs WZSkillStarted now (Cast never runs).
                 RelayZoneSkillStartedIfNeeded(casterCaster, targetCaster, skillObject);
                 ConsumeMana(caster);
-                if (Template.CastingTime <= 0)
-                    ApplyPlotOnlyFireCosts(unit);
+                // Arm GCD on press (including 10752's 1000 ms). Waiting until the plot fire-edge
+                // left a 850 ms window where hold-repeat started a new Flamebolt and cancelled
+                // the one that had not Fired yet.
+                ApplyPlotOnlyFireCosts(unit);
+                // Do not send SCSkillStarted here. Plot-only Flamebolt (and the rest of that
+                // family) already drive the cast bar from SCPlotEvent. SkillStarted with a
+                // 1 s RealCastTime locks the whole hotbar, and plot-only never EndSkill's, so
+                // hold-to-repeat dies on the first press.
                 Task.Run(() => Template.Plot.RunAsync(caster, casterCaster, target, targetCaster, skillObject, this));
                 return SkillResult.Success;
             }
@@ -369,8 +379,8 @@ public class Skill
                 {
                     if (specialEffect.Value1 > 0)
                     {
-                        // Worldgates
-                        trp = PortalManager.Instance.GetWorldGatesById((uint)specialEffect.Value1);
+                        var returnId = (uint)specialEffect.Value1;
+                        trp = PortalManager.Instance.GetReturnPoint(returnId);
                     }
                     else
                     {
@@ -1821,10 +1831,11 @@ AlwaysHit:
     /// </summary>
     public void ApplyPlotOnlyFireCosts(Unit unit)
     {
-        if (unit == null || _bypassGcd)
+        if (unit == null || _bypassGcd || _plotOnlyFireCostsApplied)
             return;
         if (!Template.PlotOnly && !ForcePlotGraphOnly)
             return;
+        _plotOnlyFireCostsApplied = true;
         ApplyGlobalCooldown(unit);
         // Skill cooldown is also applied in DoPlotEnd; applying early matches Cast() and blocks re-cast spam.
         if (Template.CooldownTime > 0)
@@ -1898,6 +1909,9 @@ AlwaysHit:
         if (Template.IgnoreGlobalCooldown)
             return;
 
+        if (!SkillCastOverlapRules.ArmsSharedGlobalCooldown(Template.CastingTime, Template.CustomGcd, Template.DefaultGcd))
+            return;
+
         // NOTE: default_gcd overriding custom_gcd is deliberate and matches the data — 29054 of the 29669
         // skills with default_gcd set carry custom_gcd 0, i.e. "use the server default". The 619 that carry
         // both are ambiguous and are left on the default rather than guessed at.
@@ -1906,7 +1920,9 @@ AlwaysHit:
             gcd = unit is Npc ? 1500 : 1000;
         if (gcd <= 0)
             return;
-        unit.GlobalCooldown = DateTime.UtcNow.AddMilliseconds(gcd * (unit.GlobalCooldownMul / 100));
+        var gcdMul = SkillGcdRules.SharedGcdMultiplier(
+            Template.UseWeaponCooldownTime, unit.GlobalCooldownMul, unit.CastTimeMul);
+        unit.GlobalCooldown = DateTime.UtcNow.AddMilliseconds(gcd * gcdMul);
     }
 
     public void ConsumeMana(BaseUnit caster)

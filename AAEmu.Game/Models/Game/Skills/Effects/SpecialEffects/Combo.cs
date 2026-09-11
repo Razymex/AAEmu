@@ -1,10 +1,15 @@
-﻿using AAEmu.Game.Models.Game.Char;
-using AAEmu.Game.Models.Game.Units;
+﻿using AAEmu.Game.Models.Game.Units;
 
 namespace AAEmu.Game.Models.Game.Skills.Effects.SpecialEffects;
 
+/// <summary>
+/// Combo names the next hold-hit for the client. World executes that skill only
+/// when the client starts it.
+/// </summary>
 public class Combo : SpecialEffectAction
 {
+    protected override SpecialType SpecialEffectActionType => SpecialType.Combo;
+
     public override void Execute(BaseUnit caster,
         SkillCaster casterObj,
         BaseUnit target,
@@ -18,6 +23,5 @@ public class Combo : SpecialEffectAction
         int value3,
         int value4)
     {
-        if (caster is Character) { Logger.Debug("Special effects: Combo comboSkillId {0}, timeFromNow {1}, value3 {2}, value4 {3}", comboSkillId, timeFromNow, value3, value4); }
     }
 }

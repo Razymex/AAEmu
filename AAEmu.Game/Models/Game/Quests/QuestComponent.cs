@@ -68,11 +68,20 @@ public class QuestComponent : IQuestComponent
 
         res |= OverrideObjectiveCompleted;
 
-        // If acts completed, handle skill and buff effects
+        // If acts completed, handle skill and buff effects once
         if (res)
         {
-            Parent.Parent.UseSkillAndBuff(Template);
-            Parent.Parent.SetNpcAggro(Template);
+            var cinemaId = QuestCinemaRules.CinemaIdForDirecting(Parent.Parent.Template, Parent.ThisStep);
+            if (QuestComponentEffectRules.ShouldDeferUntilCinema(
+                    Template.PlayCinemaBeforeBubble, Template.BuffId, cinemaId))
+            {
+                Parent.Parent.DeferComponentEffectsUntilCinema(Template, cinemaId);
+            }
+            else if (Parent.Parent.TryApplyComponentEffects(Template))
+            {
+                Parent.Parent.UseSkillAndBuff(Template);
+                Parent.Parent.SetNpcAggro(Template);
+            }
         }
 
         return res;

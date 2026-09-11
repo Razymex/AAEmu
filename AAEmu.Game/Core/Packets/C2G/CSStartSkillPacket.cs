@@ -329,9 +329,12 @@ public class CSStartSkillPacket() : GamePacket(CSOffsets.CSStartSkillPacket, 1)
         if (skillResult != SkillResult.Success)
         {
             // Don't poison the melee hotbar with CooldownTime fails — client auto-retries skill 2/3/4.
-            if (skillId is 2 or 3 or 4 && skillResult == SkillResult.CooldownTime)
+            if (skillResult == SkillResult.CooldownTime &&
+                (skillId is 2 or 3 or 4 ||
+                 template.StartAutoAttack ||
+                 SkillCastOverlapRules.IsInstantComboHit(template.CastingTime, template.CustomGcd)))
             {
-                Logger.Trace("ZoneAuthority basic-attack CooldownTime skillId={0} (suppressed fail packet)", skillId);
+                Logger.Trace("ZoneAuthority hold/combo CooldownTime skillId={0} (suppressed fail packet)", skillId);
                 return;
             }
 

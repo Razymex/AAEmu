@@ -1,5 +1,9 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+
+using AAEmu.Game;
 using AAEmu.Game.Core.Managers.Id;
+
+using NLog;
 
 namespace AAEmu.World.Core.Zone;
 
@@ -10,14 +14,42 @@ namespace AAEmu.World.Core.Zone;
 /// </summary>
 public class UnitRegistry
 {
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private const int MaxLiveIdSkips = 32;
     private readonly ConcurrentDictionary<uint, byte[]> _units = new();
 
-    public uint Register(byte[] rawBody)
+    public uint Register(byte[] rawBody) => Register(rawBody, NextPoolId, IsOwnedByGame);
+
+    /// <summary>
+    /// Allocate the next bcId that Game does not already own. Exhaustion drops the unit
+    /// instead of reusing an occupied id: <c>MirrorZoneNpcSpawn</c> rejects a bcId another
+    /// unit still owns, while the zone keeps reusing that id, so the unit would never reach
+    /// Game or its clients.
+    /// </summary>
+    internal uint Register(byte[] rawBody, Func<uint> allocateId, Func<uint, bool> isOwnedByGame)
     {
-        var bcId = ObjectIdManager.Instance.GetNextId();
-        _units[bcId] = rawBody;
-        return bcId;
+        for (var i = 0; i < MaxLiveIdSkips; i++)
+        {
+            var bcId = allocateId();
+            if (!isOwnedByGame(bcId))
+            {
+                _units[bcId] = rawBody;
+                return bcId;
+            }
+
+            Logger.Warn("UnitRegistry skipped live bc={0} (still owned in Game)", bcId);
+        }
+
+        Logger.Error(
+            "UnitRegistry exhausted {0} live-id skips, unit not registered (every candidate is still owned in Game, bodyLen={1})",
+            MaxLiveIdSkips,
+            rawBody?.Length ?? 0);
+        return 0;
     }
+
+    private static uint NextPoolId() => ObjectIdManager.Instance.GetNextId();
+
+    private static bool IsOwnedByGame(uint bcId) => WorldIntegration.FindUnitAcrossWorlds(bcId) != null;
 
     public void RegisterWithId(uint bcId, byte[] rawBody)
     {

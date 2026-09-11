@@ -31,6 +31,7 @@ public class TowerDefGameData : Singleton<TowerDefGameData>, IGameDataLoader
     /// Used with boss grade for the 1.5 km event stream — not ambient MAX priority for infantry.
     /// </summary>
     private HashSet<uint> _killQuotaNpcTemplateIds = [];
+    private HashSet<uint> _doodadAlmightyTargetIds = [];
 
     /// <summary>Spawner template id → direct <c>Npc</c> members (portal seed unit ids).</summary>
     private Dictionary<uint, HashSet<uint>> _spawnerMemberNpcs = [];
@@ -49,6 +50,7 @@ public class TowerDefGameData : Singleton<TowerDefGameData>, IGameDataLoader
         _eventSpawnerTemplateIds = [];
         _priorityNpcTemplateIds = [];
         _killQuotaNpcTemplateIds = [];
+        _doodadAlmightyTargetIds = [];
         _spawnerMemberNpcs = [];
 
         using (var command = connection.CreateCommand())
@@ -154,6 +156,9 @@ public class TowerDefGameData : Singleton<TowerDefGameData>, IGameDataLoader
                     };
 
                     towerDefProg.SpawnTargets.Add(template);
+                    if (template.SpawnTargetId != 0 &&
+                        string.Equals(template.SpawnTargetType, "DoodadAlmighty", StringComparison.Ordinal))
+                        _doodadAlmightyTargetIds.Add(template.SpawnTargetId);
                 }
             }
         }
@@ -422,6 +427,8 @@ public class TowerDefGameData : Singleton<TowerDefGameData>, IGameDataLoader
     public TowerDef GetTowerDef(uint id) => _towerDefs.GetValueOrDefault(id);
 
     public IReadOnlyCollection<TowerDef> GetAllTowerDefs() => _towerDefs.Values;
+
+    public IReadOnlySet<uint> GetDoodadAlmightyTargetIds() => _doodadAlmightyTargetIds;
 
     /// <summary>
     /// True when this spawner template is a TowerDef portal or progressive wave arm — schedule

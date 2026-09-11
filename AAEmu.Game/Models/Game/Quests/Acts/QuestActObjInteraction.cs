@@ -1,4 +1,6 @@
 ﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Models.Game.Quests;
+using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -53,7 +55,16 @@ public class QuestActObjInteraction(QuestComponentTemplate parentComponent) : Qu
         Logger.Debug($"{QuestActTemplateName}({DetailId}).OnInteraction: Quest: {questAct.QuestComponent.Parent.Parent.TemplateId}, Owner {questAct.QuestComponent.Parent.Parent.Owner.Name} ({questAct.QuestComponent.Parent.Parent.Owner.Id}), WorldInteractionId {WorldInteractionId}, DoodadId {DoodadId}, TeamShare {TeamShare}, Phase {Phase}.");
         AddObjective(questAct, 1);
 
-        var player = questAct.QuestComponent.Parent.Parent.Owner;
+        var quest = questAct.QuestComponent.Parent.Parent;
+        var progressCinemaId = QuestCinemaRules.FirstCinema(quest.Template, QuestComponentKind.Progress);
+        if (QuestNoneSceneRules.ShouldStartSceneCinema(
+                questAct.QuestComponent.Template.PlayCinemaBeforeBubble, progressCinemaId))
+        {
+            quest.Owner.Quests.BindPlayingCinema(progressCinemaId);
+            quest.CreditNoneSceneActs();
+        }
+
+        var player = quest.Owner;
         if (player.Id == args.SourcePlayer.Id)
         {
             // Handle interaction that only apply to source player

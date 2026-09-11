@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
@@ -41,6 +41,7 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             // the client drops. Reset on select so the inactivity window starts at enter, not at lobby load.
             character.LastPacketActivityTime = DateTime.UtcNow;
             character.ResetMirrorNpcStreaming();
+            character.WorldEntryCompleted = false;
             if (Character.UsedCharacterObjIds.TryGetValue(character.Id, out var oldObjId))
             {
                 Connection.ActiveChar.ObjId = oldObjId;
@@ -123,13 +124,12 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             Connection.SendPacket(new SCUpdateAdditionalSkillPointPacket());
 
             foreach (var houseBatch in houses.Chunk(SCHouseDataPacket.MaxEntries))
-            {
                 Connection.SendPacket(new SCHouseDataPacket(houseBatch));
-            }
 
             foreach (var conflict in ZoneManager.Instance.GetConflicts())
             {
-                Connection.SendPacket(new SCConflictZoneStatePacket(conflict.ZoneGroupId, conflict.CurrentZoneState, conflict.NextStateTime));
+                Connection.SendPacket(new SCConflictZoneStatePacket(
+                    conflict.ZoneGroupId, conflict.CurrentZoneState, conflict.NextStateTime));
             }
 
             // 10.0.2.13: SCFactionList (opcode 0x08) was removed; system-faction descriptors are

@@ -24,7 +24,8 @@ public class FormulaManager : Singleton<FormulaManager>, IFormulaManager
 
     public UnitFormula GetUnitFormula(FormulaOwnerType owner, UnitFormulaKind kind)
     {
-        if (_unitFormulas.TryGetValue(owner, out var value)
+        if (_unitFormulas != null
+            && _unitFormulas.TryGetValue(owner, out var value)
             && value.TryGetValue(kind, out var kindFound))
             return kindFound;
 

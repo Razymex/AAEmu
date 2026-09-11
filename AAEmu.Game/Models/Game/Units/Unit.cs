@@ -790,8 +790,16 @@ public class Unit : BaseUnit, IUnit
             return;
         }
 
-        // Generate the loot for this Npc
-        LootingContainer.GenerateLoot(killer);
+        // Loot must not abort death. A missing loot-group key used to throw here and
+        // skip Zone corpse (WZUnitDeath) while World HP was already 0.
+        try
+        {
+            LootingContainer.GenerateLoot(killer);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Loot generation failed for unit={0}, death continues", ObjId);
+        }
 
         // Cleanup targeting and aggro packets
         if (CurrentTarget != null)

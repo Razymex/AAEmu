@@ -1285,36 +1285,44 @@ public class WorldManager(
             familyManager.Value.OnCharacterLogin(character);
         }
 
-        // Ensure nearby NPCs/doodads are streamed after world entry (Phase 2 visibility).
-        ResendVisibleObjectsToCharacter(character);
+        // Region enter already painted. Only fill gaps — do not duplicate UnitState.
+        ResendVisibleObjectsToCharacter(character, clientDroppedVisibility: false);
     }
 
-    public static void ResendVisibleObjectsToCharacter(Character character)
+    public static void ResendVisibleObjectsToCharacter(Character character, bool clientDroppedVisibility)
     {
-        // Re-send visible flags to character getting out of cinema
         var stuffs = GetNeighborRegionsObjs<GameObject>(character);
         var doodads = new List<Doodad>();
         foreach (var stuff in stuffs)
         {
             if (stuff is Doodad d)
-                doodads.Add(d);
-            else
             {
-                // Mirror SCUnitState often lands mid-intro cinema; the client drops those units, but
-                // MirrorNpcStatesSentIds still blocks a second send — so Resend was a no-op and
-                // Elf starters saw an empty world until they walked far enough for new AOI entries.
-                if (stuff is Npc npc && npc.IsZoneMirror)
-                    character.ReleaseMirrorNpcSlot(npc.ObjId);
-                if (stuff is Slave slave)
-                {
-                    // Keeps exit-band eligibility for a hull already streamed (230 m after a
-                    // cinema must repaint, not wait for a fresh 225 m entry).
-                    slave.ResendVisibleObject(character);
-                    continue;
-                }
-                stuff.AddVisibleObject(character);
+                doodads.Add(d);
+                continue;
             }
+
+            if (stuff is Npc npc && npc.IsZoneMirror)
+            {
+                var alreadyStreamed = character.MirrorNpcStatesSentIds.ContainsKey(npc.ObjId);
+                if (!VisibleObjectResendRules.ShouldRepaintMirror(alreadyStreamed, clientDroppedVisibility))
+                    continue;
+                if (clientDroppedVisibility)
+                    character.ReleaseMirrorNpcSlot(npc.ObjId);
+            }
+
+            if (stuff is Slave slave)
+            {
+                // Keeps exit-band eligibility for a hull already streamed (230 m after a
+                // cinema must repaint, not wait for a fresh 225 m entry).
+                slave.ResendVisibleObject(character);
+                continue;
+            }
+
+            stuff.AddVisibleObject(character);
         }
+
+        if (!VisibleObjectResendRules.ShouldResendDoodadCreates(clientDroppedVisibility))
+            return;
 
         for (var i = 0; i < doodads.Count; i += SCDoodadsCreatedPacket.MaxCountPerPacket)
         {

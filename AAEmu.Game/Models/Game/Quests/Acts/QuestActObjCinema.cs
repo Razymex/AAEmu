@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Units;
+using AAEmu.Game.Models.Game.Quests;
 
 namespace AAEmu.Game.Models.Game.Quests.Acts;
 
@@ -52,8 +53,12 @@ public class QuestActObjCinema(QuestComponentTemplate parentComponent) : QuestAc
 
         if (sender is not Character player)
             return;
-        // Set currentlyPlayingId
+        if (!QuestCinemaBindRules.ShouldBindStarted(e.CinemaId, CinemaId, player.CurrentlyPlayingCinemaId))
+            return;
+
         player.CurrentlyPlayingCinemaId = CinemaId;
+        if (QuestObjectiveSlotRules.CinemaWatchCounts(questAct.QuestComponent.Parent.Parent.Step))
+            SetObjective(questAct, 1);
     }
 
     /// <summary>
@@ -73,7 +78,8 @@ public class QuestActObjCinema(QuestComponentTemplate parentComponent) : QuestAc
         if (player.CurrentlyPlayingCinemaId != CinemaId)
             return;
 
-        SetObjective(questAct, 1);
+        if (QuestObjectiveSlotRules.CinemaWatchCounts(questAct.QuestComponent.Parent.Parent.Step))
+            SetObjective(questAct, 1);
         player.CurrentlyPlayingCinemaId = 0;
     }
 }

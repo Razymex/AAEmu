@@ -1309,6 +1309,10 @@ public class Slave : Unit
     /// </remarks>
     public void UpdateSlaveGearBonuses()
     {
+        var canReadCaps = FormulaManager.Instance.GetUnitFormula(FormulaOwnerType.Slave, UnitFormulaKind.MaxHealth) != null;
+        var oldMaxHp = canReadCaps ? MaxHp : 0;
+        var oldMaxMp = canReadCaps ? MaxMp : 0;
+
         Bonuses[GearBonusesIndex] = [];
         if (Equipment != null)
         {
@@ -1342,6 +1346,12 @@ public class Slave : Unit
                     AddBonus(GearBonusesIndex, new Bonus { Template = template, Value = template.Value });
                 }
             }
+        }
+
+        if (canReadCaps)
+        {
+            Hp = SlaveHealthCapRules.AfterMaxHpChanged(Hp, oldMaxHp, MaxHp);
+            Mp = SlaveHealthCapRules.AfterMaxHpChanged(Mp, oldMaxMp, MaxMp);
         }
 
         LogKitAddedMassIfChanged();
