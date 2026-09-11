@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
@@ -1909,7 +1909,7 @@ AlwaysHit:
         if (Template.IgnoreGlobalCooldown)
             return;
 
-        if (!SkillCastOverlapRules.ArmsSharedGlobalCooldown(Template.CastingTime, Template.CustomGcd))
+        if (!SkillCastOverlapRules.ArmsSharedGlobalCooldown(Template.CastingTime, Template.CustomGcd, Template.DefaultGcd))
             return;
 
         // NOTE: default_gcd overriding custom_gcd is deliberate and matches the data — 29054 of the 29669

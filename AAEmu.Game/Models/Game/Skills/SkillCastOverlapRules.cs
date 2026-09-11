@@ -1,4 +1,4 @@
-namespace AAEmu.Game.Models.Game.Skills;
+﻿namespace AAEmu.Game.Models.Game.Skills;
 
 /// <summary>
 /// Hold-to-repeat and plot-only combo hits (Flamebolt 10752 + 24894/24895).
@@ -23,10 +23,12 @@ public static class SkillCastOverlapRules
 
     /// <summary>
     /// Each hit arms its own custom_gcd. Follow-ups are 10 ms — the reduced
-    /// combo GCD, not a second 1000 ms lock.
+    /// combo GCD, not a second 1000 ms lock. A skill that only declares
+    /// <c>default_gcd</c> still arms the server default: 29054 skills carry
+    /// custom_gcd 0 with default_gcd set.
     /// </summary>
-    public static bool ArmsSharedGlobalCooldown(int castingTime, int customGcd) =>
-        customGcd > 0;
+    public static bool ArmsSharedGlobalCooldown(int castingTime, int customGcd, bool defaultGcd) =>
+        customGcd > 0 || defaultGcd;
 
     /// <summary>
     /// A new plot cancels a busy one, except combo hits and a repeat of the same skill
