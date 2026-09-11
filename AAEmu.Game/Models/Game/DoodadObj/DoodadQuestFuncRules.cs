@@ -56,8 +56,12 @@ public static class DoodadQuestFuncRules
 
     /// <summary>
     /// A Use that found no matching func must not credit <c>QuestActObjInteraction</c>.
+    /// Credit is tied to that caster's use, not a shared doodad flag.
     /// </summary>
     public static bool ShouldCountInteraction(bool useAppliedFunc) => useAppliedFunc;
+
+    public static bool ShouldCountInteractionForCaster(uint casterObjId, uint recordedCasterObjId, bool applied) =>
+        casterObjId != 0 && casterObjId == recordedCasterObjId && ShouldCountInteraction(applied);
 
     /// <summary>
     /// Prefer an in-progress report, else the first startable accept.

@@ -134,6 +134,8 @@ public class Doodad : BaseUnit
         {
             if (value != _funcGroupId)
             {
+                if (DoodadQuestReactRules.ShouldInvalidateViewerPhases(_funcGroupId, value))
+                    _questReactViewerPhases.Clear();
                 _funcGroupId = value;
                 PhaseTime = DateTime.UtcNow; // Save PhaseTime at start of new phase (group)
                 if (IsPersistent)
@@ -331,11 +333,13 @@ public class Doodad : BaseUnit
     public bool ToNextPhase { get; set; }
 
     /// <summary>
-    /// Last <see cref="Use"/> found and ran a func. Interaction quest credit reads this.
+    /// Last <see cref="Use"/> found and ran a func. Only valid inside the Use lock.
+    /// Quest credit reads <see cref="ConsumeUseAppliedFunc"/>.
     /// </summary>
     public bool LastUseAppliedFunc { get; private set; }
 
     private readonly ConcurrentDictionary<uint, uint> _questReactViewerPhases = new();
+    private readonly ConcurrentDictionary<uint, bool> _useAppliedByCaster = new();
 
     /// <summary>
     /// Used for ratio calculations on random triggers
@@ -447,10 +451,28 @@ public class Doodad : BaseUnit
     /// <param name="caster"></param>
     /// <param name="startedSkillId"></param>
     /// <param name="funcGroupId"></param>
-    public void Use(BaseUnit caster, uint startedSkillId = 0, int funcGroupId = 0)
+    public bool Use(BaseUnit caster, uint startedSkillId = 0, int funcGroupId = 0)
     {
         lock (this)
+        {
             UseLocked(caster, startedSkillId, funcGroupId);
+            var applied = LastUseAppliedFunc;
+            if (caster is Character character && character.ObjId != 0)
+                _useAppliedByCaster[character.ObjId] = applied;
+            return applied;
+        }
+    }
+
+    /// <summary>
+    /// Quest credit for this caster's last <see cref="Use"/>. Other players
+    /// writing the shared flag cannot steal or grant this result.
+    /// </summary>
+    public bool ConsumeUseAppliedFunc(uint characterObjId)
+    {
+        if (characterObjId == 0)
+            return false;
+        return _useAppliedByCaster.TryRemove(characterObjId, out var applied) &&
+               DoodadQuestFuncRules.ShouldCountInteraction(applied);
     }
 
     private void UseLocked(BaseUnit caster, uint startedSkillId, int funcGroupId)

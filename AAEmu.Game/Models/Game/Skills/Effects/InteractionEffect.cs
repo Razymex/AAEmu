@@ -40,8 +40,7 @@ public class InteractionEffect : EffectTemplate
 
         if (caster is not Character character) { return; }
         if (character.SkillCancelled) { return; }
-        if (target is Doodad doodad &&
-            DoodadQuestFuncRules.ShouldCountInteraction(doodad.LastUseAppliedFunc))
+        if (target is Doodad doodad && doodad.ConsumeUseAppliedFunc(character.ObjId))
         {
             QuestManager.Instance.DoDoodadInteractionEvents((Character)caster, (Character)caster, target.TemplateId);
         }

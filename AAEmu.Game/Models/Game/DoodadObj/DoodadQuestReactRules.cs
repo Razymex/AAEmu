@@ -39,6 +39,13 @@ public static class DoodadQuestReactRules
     /// </summary>
     public static bool ShouldMutateSharedPhase() => false;
 
+    /// <summary>
+    /// A timer or normal func that hops the shared phase must drop overlays
+    /// computed against the previous group.
+    /// </summary>
+    public static bool ShouldInvalidateViewerPhases(uint previousSharedPhase, uint nextSharedPhase) =>
+        previousSharedPhase != nextSharedPhase;
+
     public static bool ShouldKeepViewerPhase(uint sharedPhase, uint viewerPhase) =>
         viewerPhase != 0 && viewerPhase != sharedPhase;
 

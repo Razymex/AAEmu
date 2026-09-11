@@ -53,4 +53,11 @@ public class DoodadQuestReactRulesTests
         await Assert.That(DoodadQuestReactRules.NextViewerPhase(41880, 41881)).IsEqualTo(41881u);
         await Assert.That(DoodadQuestReactRules.NextViewerPhase(41880, 41880)).IsEqualTo(41880u);
     }
+
+    [Test]
+    public async Task SharedPhaseChange_DropsViewerOverlays()
+    {
+        await Assert.That(DoodadQuestReactRules.ShouldInvalidateViewerPhases(41880, 41882)).IsTrue();
+        await Assert.That(DoodadQuestReactRules.ShouldInvalidateViewerPhases(41880, 41880)).IsFalse();
+    }
 }
