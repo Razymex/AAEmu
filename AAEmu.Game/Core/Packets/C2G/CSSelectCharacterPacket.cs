@@ -1,4 +1,4 @@
-using AAEmu.Commons.Network;
+﻿using AAEmu.Commons.Network;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.Id;
 using AAEmu.Game.Core.Managers.UnitManagers;
@@ -41,6 +41,7 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             // the client drops. Reset on select so the inactivity window starts at enter, not at lobby load.
             character.LastPacketActivityTime = DateTime.UtcNow;
             character.ResetMirrorNpcStreaming();
+            character.WorldEntryCompleted = false;
             if (Character.UsedCharacterObjIds.TryGetValue(character.Id, out var oldObjId))
             {
                 Connection.ActiveChar.ObjId = oldObjId;

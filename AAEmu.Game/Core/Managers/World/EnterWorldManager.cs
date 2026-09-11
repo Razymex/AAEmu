@@ -248,7 +248,10 @@ public class EnterWorldManager(
 
             // A cinema that never ended must not take its quest effect with it: the step is
             // already saved, so apply the pending cinema-end buffs before the save below.
-            activeChar.Quests.FlushPendingCinemaEndEffects();
+            // Only a session that reached the world can deliver them — leaving from select
+            // (a refused zone entry, say) keeps the queue, and the save rewrites its row.
+            if (activeChar.WorldEntryCompleted)
+                activeChar.Quests.FlushPendingCinemaEndEffects();
 
             // Despawn and unmount everybody from owned Mates
             activeChar.ParentWorld.MateManager.RemoveAndDespawnAllActiveOwnedMates(activeChar);
