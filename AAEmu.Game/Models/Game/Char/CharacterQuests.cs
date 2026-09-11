@@ -164,6 +164,39 @@ public class CharacterQuests(Character owner)
             ApplyCinemaEndEffects(cinemaId);
     }
 
+    /// <summary>
+    /// Applies the cinema-end entries a previous session could not finish. The component id
+    /// is the only durable name for the effect, so a component that no longer exists is
+    /// dropped with a warning. Production resolves through the quest manager; tests inject
+    /// their own resolver.
+    /// </summary>
+    public void RestorePendingCinemaEndEffects(
+        IReadOnlyList<(uint QuestId, uint CinemaId, uint ComponentId)> rows,
+        Func<uint, QuestComponentTemplate> componentResolver = null)
+    {
+        if (rows == null || rows.Count == 0)
+            return;
+
+        componentResolver ??= QuestManager.Instance.GetComponent;
+
+        foreach (var row in rows)
+        {
+            var component = componentResolver(row.ComponentId);
+            if (component == null)
+            {
+                Logger.Warn(
+                    "Pending cinema-end component {0} for quest {1} no longer exists, dropped",
+                    row.ComponentId,
+                    row.QuestId);
+                continue;
+            }
+
+            EnqueueCinemaEndEffects(row.CinemaId, component);
+        }
+
+        FlushPendingCinemaEndEffects();
+    }
+
     public bool HasQuest(uint questId)
     {
         return ActiveQuests.ContainsKey(questId);
@@ -780,6 +813,50 @@ public class CharacterQuests(Character owner)
                 }
             }
         }
+
+        // A pending cinema-end effect survives a dropped connection: the client never reports
+        // the film ending and the step is already saved, so apply what the quest still owes.
+        // The rows are cleared once they are restored.
+        try
+        {
+            var pendingCinemaEnds = new List<(uint QuestId, uint CinemaId, uint ComponentId)>();
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText =
+                    "SELECT `quest_id`,`cinema_id`,`component_id` FROM character_quest_cinema_end_effects WHERE `owner` = @owner";
+                command.Parameters.AddWithValue("@owner", Owner.Id);
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        pendingCinemaEnds.Add((
+                            reader.GetUInt32("quest_id"),
+                            reader.GetUInt32("cinema_id"),
+                            reader.GetUInt32("component_id")));
+                    }
+                }
+            }
+
+            if (pendingCinemaEnds.Count == 0)
+                return;
+
+            RestorePendingCinemaEndEffects(pendingCinemaEnds);
+
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "DELETE FROM character_quest_cinema_end_effects WHERE `owner` = @owner";
+                command.Parameters.AddWithValue("@owner", Owner.Id);
+                command.ExecuteNonQuery();
+            }
+        }
+        catch (MySqlException ex)
+        {
+            // A missing table must not block login; the effect is lost exactly as before this change.
+            Logger.Error(
+                ex,
+                "Pending cinema-end restore skipped for {0} — is the character_quest_cinema_end_effects update applied?",
+                Owner.Name);
+        }
     }
 
     /// <summary>
@@ -844,6 +921,52 @@ public class CharacterQuests(Character owner)
 
                 command.Parameters.Clear();
             }
+        }
+
+        // A cinema-end effect the film has not delivered yet belongs to the quest, so it is
+        // saved with it. An abrupt disconnect saves the character without leaving the world,
+        // and that path must not lose the pending buff or teleport.
+        try
+        {
+            using (var command = connection.CreateCommand())
+            {
+                command.Connection = connection;
+                command.Transaction = transaction;
+
+                command.CommandText = "DELETE FROM character_quest_cinema_end_effects WHERE `owner` = @owner";
+                command.Parameters.AddWithValue("@owner", Owner.Id);
+                command.ExecuteNonQuery();
+            }
+
+            if (_cinemaEndEffects.Count > 0)
+            {
+                using var command = connection.CreateCommand();
+                command.Connection = connection;
+                command.Transaction = transaction;
+
+                command.CommandText =
+                    "INSERT INTO character_quest_cinema_end_effects(`owner`,`quest_id`,`cinema_id`,`component_id`) " +
+                    "VALUES(@owner,@quest_id,@cinema_id,@component_id)";
+
+                foreach (var pending in _cinemaEndEffects)
+                {
+                    command.Parameters.AddWithValue("@owner", Owner.Id);
+                    command.Parameters.AddWithValue("@quest_id", pending.Component.ParentQuestTemplate?.Id ?? 0);
+                    command.Parameters.AddWithValue("@cinema_id", pending.CinemaId);
+                    command.Parameters.AddWithValue("@component_id", pending.Component.Id);
+                    command.ExecuteNonQuery();
+
+                    command.Parameters.Clear();
+                }
+            }
+        }
+        catch (MySqlException ex)
+        {
+            // The character save must still succeed when the update has not been applied yet.
+            Logger.Error(
+                ex,
+                "Pending cinema-end save skipped for {0} — is the character_quest_cinema_end_effects update applied?",
+                Owner.Name);
         }
     }
 

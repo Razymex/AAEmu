@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS `character_bless_uthstin_pages` (
   PRIMARY KEY (`owner`, `page_index`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Bless Uthstin applied stats per page';
 
+CREATE TABLE IF NOT EXISTS `character_quest_cinema_end_effects` (
+  `owner` int unsigned NOT NULL,
+  `quest_id` int unsigned NOT NULL,
+  `cinema_id` int unsigned NOT NULL,
+  `component_id` int unsigned NOT NULL,
+  PRIMARY KEY (`owner`, `component_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Quest cinema-end effects still owed to the character';
+
 CREATE TABLE IF NOT EXISTS `character_arche_passes` (
   `owner` int unsigned NOT NULL,
   `pass_id` int unsigned NOT NULL,

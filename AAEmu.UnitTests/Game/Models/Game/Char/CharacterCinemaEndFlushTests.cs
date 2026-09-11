@@ -6,37 +6,39 @@ using AAEmu.Game.Models.Game.Units;
 namespace AAEmu.UnitTests.Game.Models.Game.Char;
 
 /// <summary>
-/// Leave-world flush of the deferred cinema-end effects. The client never reports
-/// the cinema end once the session is gone, and the quest step is already saved, so
-/// the pending entry must be applied rather than dropped with the in-memory list.
+/// Deferred cinema-end effects. The client never reports the film ending once a session is
+/// gone, so a graceful leave applies them and a dropped connection restores them on login.
 /// </summary>
 public class CharacterCinemaEndFlushTests
 {
     private const uint QuestId = 5804;
     private const uint CinemaId = 228;
+    private const uint ComponentId = 25087;
 
-    private static CharacterQuests WithPendingCinema()
-    {
-        var character = new Character(new UnitCustomModelParams());
-        var quests = new CharacterQuests(character);
-        var component = new QuestComponentTemplate(new QuestTemplate { Id = QuestId })
+    private static QuestComponentTemplate BuildComponent() =>
+        new(new QuestTemplate { Id = QuestId })
         {
-            Id = 25087,
+            Id = ComponentId,
             CinemaId = CinemaId,
-            // Zero buff/skill keeps the apply path a no-op; this test is about the entry.
+            // Zero buff/skill keeps the apply path a no-op; these tests are about the entry.
             BuffId = 0,
             SkillId = 0
         };
 
-        quests.EnqueueCinemaEndEffects(CinemaId, component);
+    private static CharacterQuests NewQuests() =>
+        new(new Character(new UnitCustomModelParams()));
+
+    private static CharacterQuests WithPendingCinema()
+    {
+        var quests = NewQuests();
+        quests.EnqueueCinemaEndEffects(CinemaId, BuildComponent());
         return quests;
     }
 
     [Test]
     public async Task Flush_WithoutPendingEffects_IsANoOp()
     {
-        var character = new Character(new UnitCustomModelParams());
-        var quests = new CharacterQuests(character);
+        var quests = NewQuests();
 
         quests.FlushPendingCinemaEndEffects();
 
@@ -61,6 +63,41 @@ public class CharacterCinemaEndFlushTests
         var quests = WithPendingCinema();
 
         quests.FlushPendingCinemaEndEffects();
+
+        await Assert.That(quests.DeferredCinemaIds()).IsEmpty();
+    }
+
+    [Test]
+    public async Task Restore_AppliesTheSavedEntryForACompletedQuest()
+    {
+        var quests = NewQuests();
+        quests.SetCompletedQuestFlag(QuestId, true);
+
+        quests.RestorePendingCinemaEndEffects(
+            new[] { (QuestId, CinemaId, ComponentId) },
+            _ => BuildComponent());
+
+        await Assert.That(quests.DeferredCinemaIds()).IsEmpty();
+    }
+
+    [Test]
+    public async Task Restore_WithNoRows_IsANoOp()
+    {
+        var quests = NewQuests();
+
+        quests.RestorePendingCinemaEndEffects([], _ => BuildComponent());
+
+        await Assert.That(quests.DeferredCinemaIds()).IsEmpty();
+    }
+
+    [Test]
+    public async Task Restore_DropsARowWhoseComponentIsGone()
+    {
+        var quests = NewQuests();
+
+        quests.RestorePendingCinemaEndEffects(
+            new[] { (QuestId, CinemaId, 999_999u) },
+            _ => null);
 
         await Assert.That(quests.DeferredCinemaIds()).IsEmpty();
     }
