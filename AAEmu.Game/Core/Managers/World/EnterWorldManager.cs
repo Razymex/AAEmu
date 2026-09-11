@@ -248,7 +248,7 @@ public class EnterWorldManager(
 
             // A cinema that never ended must not take its quest effect with it: the step is
             // already saved, so apply the pending cinema-end buffs before the save below.
-            activeChar.Quests.FlushPendingCinemaEndEffects();;
+            activeChar.Quests.FlushPendingCinemaEndEffects();
 
             // Despawn and unmount everybody from owned Mates
             activeChar.ParentWorld.MateManager.RemoveAndDespawnAllActiveOwnedMates(activeChar);
