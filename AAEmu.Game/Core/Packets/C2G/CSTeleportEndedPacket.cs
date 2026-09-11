@@ -36,6 +36,6 @@ public class CSTeleportEndedPacket() : GamePacket(CSOffsets.CSTeleportEndedPacke
         Logger.Info("TeleportEnded applied {0} -> ({1:0.0},{2:0.0},{3:0.0}) zone={4}",
             me.Name, x, y, z, me.Transform.ZoneId);
 
-        WorldManager.ResendVisibleObjectsToCharacter(me);
+        WorldManager.ResendVisibleObjectsToCharacter(me, clientDroppedVisibility: false);
     }
 }

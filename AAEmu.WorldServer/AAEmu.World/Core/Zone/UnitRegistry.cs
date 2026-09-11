@@ -1,5 +1,10 @@
 using System.Collections.Concurrent;
+
+using AAEmu.Game;
 using AAEmu.Game.Core.Managers.Id;
+using AAEmu.Game.Models.Game.NPChar;
+
+using NLog;
 
 namespace AAEmu.World.Core.Zone;
 
@@ -10,11 +15,26 @@ namespace AAEmu.World.Core.Zone;
 /// </summary>
 public class UnitRegistry
 {
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private const int MaxLiveIdSkips = 32;
     private readonly ConcurrentDictionary<uint, byte[]> _units = new();
 
     public uint Register(byte[] rawBody)
     {
-        var bcId = ObjectIdManager.Instance.GetNextId();
+        uint bcId = 0;
+        for (var i = 0; i < MaxLiveIdSkips; i++)
+        {
+            bcId = ObjectIdManager.Instance.GetNextId();
+            if (!ZoneMirrorIdRules.ShouldSkipAllocatedId(WorldIntegration.FindUnitAcrossWorlds(bcId) != null))
+            {
+                _units[bcId] = rawBody;
+                return bcId;
+            }
+
+            Logger.Warn("UnitRegistry skipped live bc={0} (still owned in Game)", bcId);
+        }
+
+        Logger.Error("UnitRegistry exhausted live-id skips, using bc={0}", bcId);
         _units[bcId] = rawBody;
         return bcId;
     }

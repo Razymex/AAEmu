@@ -16,7 +16,7 @@ public class CSCompletedCinemaPacket() : GamePacket(CSOffsets.CSCompletedCinemaP
             character.CurrentlyPlayingCinemaId = cinemaId;
         Logger.Warn("CompletedCinema cinema={0}", cinemaId);
         character.Quests.ApplyCinemaEndEffects(cinemaId);
-        WorldManager.ResendVisibleObjectsToCharacter(character);
+        WorldManager.ResendVisibleObjectsToCharacter(character, clientDroppedVisibility: true);
         character.Events.OnCinemaEnded(character, new OnCinemaEndedArgs { CinemaId = cinemaId });
         if (character.CurrentlyPlayingCinemaId == cinemaId)
             character.CurrentlyPlayingCinemaId = 0;
