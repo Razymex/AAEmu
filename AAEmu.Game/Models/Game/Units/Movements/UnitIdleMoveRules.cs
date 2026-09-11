@@ -8,6 +8,10 @@ namespace AAEmu.Game.Models.Game.Units.Movements;
 /// </summary>
 public static class UnitIdleMoveRules
 {
+    /// <summary>
+    /// Tolerance for treating a zone report as a repeat of the known pose.
+    /// Callers fail open: any wider delta is handled as real movement.
+    /// </summary>
     public const float SamePositionMetres = 0.15f;
 
     public static bool IsStationary(

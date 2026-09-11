@@ -1,8 +1,7 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 
 using AAEmu.Game;
 using AAEmu.Game.Core.Managers.Id;
-using AAEmu.Game.Models.Game.NPChar;
 
 using NLog;
 
@@ -32,7 +31,7 @@ public class UnitRegistry
         for (var i = 0; i < MaxLiveIdSkips; i++)
         {
             var bcId = allocateId();
-            if (!ZoneMirrorIdRules.ShouldSkipAllocatedId(isOwnedByGame(bcId)))
+            if (!isOwnedByGame(bcId))
             {
                 _units[bcId] = rawBody;
                 return bcId;

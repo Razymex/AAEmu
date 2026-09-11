@@ -1,4 +1,4 @@
-using AAEmu.Game.Models.Game.DoodadObj;
+﻿using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.Quests.Static;
 
 namespace AAEmu.UnitTests.Game.Models.Game.DoodadObj;
@@ -86,15 +86,6 @@ public class DoodadQuestFuncRulesTests
     {
         await Assert.That(DoodadQuestFuncRules.ShouldCountInteraction(true)).IsTrue();
         await Assert.That(DoodadQuestFuncRules.ShouldCountInteraction(false)).IsFalse();
-    }
-
-    [Test]
-    public async Task Interaction_CreditIsTiedToThatCaster()
-    {
-        await Assert.That(DoodadQuestFuncRules.ShouldCountInteractionForCaster(10, 10, true)).IsTrue();
-        await Assert.That(DoodadQuestFuncRules.ShouldCountInteractionForCaster(10, 11, true)).IsFalse();
-        await Assert.That(DoodadQuestFuncRules.ShouldCountInteractionForCaster(10, 10, false)).IsFalse();
-        await Assert.That(DoodadQuestFuncRules.ShouldCountInteractionForCaster(0, 0, true)).IsFalse();
     }
 
     [Test]

@@ -19,6 +19,4 @@ public static class ZoneMirrorIdRules
                && existingZoneId == incomingZoneId
                && existingInstanceId == incomingInstanceId;
     }
-
-    public static bool ShouldSkipAllocatedId(bool unitStillExists) => unitStillExists;
 }
