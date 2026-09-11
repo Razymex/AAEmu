@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using AAEmu.Commons.Utils;
 using AAEmu.Game.GameData.Framework;
 using AAEmu.Game.Utils.DB;
@@ -15,7 +17,9 @@ public class ContentConfigGameData : Singleton<ContentConfigGameData>, IGameData
 {
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
 
-    private readonly Dictionary<string, long> _values = new(StringComparer.Ordinal);
+    // Concurrent: parallel test classes seed these rows while other tests read them.
+    // The other test-seeded game data stores use the same type for the same reason.
+    private readonly ConcurrentDictionary<string, long> _values = new(StringComparer.Ordinal);
 
     public void Load(SqliteConnection connection)
     {
