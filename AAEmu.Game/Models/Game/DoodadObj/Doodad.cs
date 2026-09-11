@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using AAEmu.Commons.Network;
 using AAEmu.Commons.Utils.DB;
 using AAEmu.Game;
@@ -1205,8 +1205,11 @@ public class Doodad : BaseUnit
     /// QuestReact is character-dependent and skipped at boot. Apply it when a player first
     /// streams the doodad, uses it, or a nearby quest step changes, so the talkable phase
     /// is not stuck until they leave and re-enter range.
+    /// The whole ordered chain is walked, never a single quest: each row validates its own
+    /// quest state, so refreshing for one quest would skip an earlier row that still gates
+    /// the phase and reset the viewer instead.
     /// </summary>
-    public void ApplyQuestReact(Character character, uint questId = 0)
+    public void ApplyQuestReact(Character character)
     {
         if (character == null || FuncGroupId == 0)
             return;
@@ -1221,19 +1224,8 @@ public class Doodad : BaseUnit
             if (phaseFunc.FuncType != nameof(DoodadFuncQuestReact))
                 continue;
 
-            if (questId == 0)
-            {
-                hasReact = true;
-                break;
-            }
-
-            if (DoodadManager.Instance.GetPhaseFuncTemplate(phaseFunc.FuncId, phaseFunc.FuncType)
-                    is DoodadFuncQuestReact react &&
-                react.QuestId == questId)
-            {
-                hasReact = true;
-                break;
-            }
+            hasReact = true;
+            break;
         }
 
         if (!hasReact)
@@ -1252,8 +1244,6 @@ public class Doodad : BaseUnit
                     continue;
                 if (DoodadManager.Instance.GetPhaseFuncTemplate(phaseFunc.FuncId, phaseFunc.FuncType)
                         is not DoodadFuncQuestReact react)
-                    continue;
-                if (questId != 0 && react.QuestId != questId)
                     continue;
                 if (!react.TryResolveViewerNext(character, phase, out var next))
                     continue;
@@ -1294,11 +1284,11 @@ public class Doodad : BaseUnit
     /// Re-resolve this viewer's QuestReact phase and unicast it. Does not
     /// change the shared persisted phase.
     /// </summary>
-    public void RefreshQuestReactFor(Character character, uint questId = 0)
+    public void RefreshQuestReactFor(Character character)
     {
         if (character == null)
             return;
-        ApplyQuestReact(character, questId);
+        ApplyQuestReact(character);
         character.SendPacket(new SCDoodadPhaseChangedPacket(this, GetPhaseFor(character)));
     }
 

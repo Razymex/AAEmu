@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Concurrent;
 using System.Data;
 using AAEmu.Game.Core.Managers;
@@ -124,9 +124,14 @@ public class CharacterQuests(Character owner)
                 continue;
 
             if (quest != null)
+            {
                 quest.UseSkillAndBuff(pending.Component);
-            else
+            }
+            else if (pending.Component.SkillId > 0 || pending.Component.BuffId > 0)
+            {
+                // Resolve the manager only when the component carries an effect.
                 QuestComponentEffectRules.ApplySkillAndBuff(Owner, pending.Component, SkillManager.Instance);
+            }
         }
 
         if (applied == 0)
@@ -136,6 +141,27 @@ public class CharacterQuests(Character owner)
                 cinemaId,
                 _cinemaEndEffects.Count);
         }
+    }
+
+    /// <summary>
+    /// Leave-world flush. Once the session is gone the client never reports the cinema
+    /// end, and the quest step is already saved, so apply the pending entries now instead
+    /// of dropping the quest's buff or teleport with this in-memory list.
+    /// </summary>
+    public void FlushPendingCinemaEndEffects()
+    {
+        if (_cinemaEndEffects.Count == 0)
+            return;
+
+        var cinemas = new List<uint>();
+        foreach (var pending in _cinemaEndEffects)
+        {
+            if (!cinemas.Contains(pending.CinemaId))
+                cinemas.Add(pending.CinemaId);
+        }
+
+        foreach (var cinemaId in cinemas)
+            ApplyCinemaEndEffects(cinemaId);
     }
 
     public bool HasQuest(uint questId)
@@ -292,7 +318,7 @@ public class CharacterQuests(Character owner)
         {
             var started = AddQuest(questId, false, QuestAcceptorType.Doodad, doodad.TemplateId);
             if (started)
-                doodad.RefreshQuestReactFor(Owner, questId);
+                doodad.RefreshQuestReactFor(Owner);
             return started;
         }
 
@@ -317,8 +343,10 @@ public class CharacterQuests(Character owner)
     }
 
     /// <summary>
-    /// QuestReact rows only live on the current phase. Re-apply nearby after a step
-    /// change so the body flips without a leave/re-enter.
+    /// QuestReact rows only live on the current phase. Re-apply the whole chain nearby
+    /// after a step change so the body flips without a leave/re-enter. The chain is not
+    /// filtered by <paramref name="questId"/>: rows are ordered and an earlier quest can
+    /// still hold the phase.
     /// </summary>
     public void ApplyNearbyQuestReacts(uint questId)
     {
@@ -326,7 +354,7 @@ public class CharacterQuests(Character owner)
             return;
 
         foreach (var doodad in WorldManager.GetAround<Doodad>(Owner))
-            doodad?.RefreshQuestReactFor(Owner, questId);
+            doodad?.RefreshQuestReactFor(Owner);
     }
 
     /// <summary>
