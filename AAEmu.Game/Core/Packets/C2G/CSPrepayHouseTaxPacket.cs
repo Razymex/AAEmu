@@ -15,6 +15,7 @@ public class CSPrepayHouseTaxPacket() : GamePacket(CSOffsets.CSPrepayHouseTaxPac
 
     public override void Read(PacketStream stream)
     {
+
         Tl = stream.ReadInt16();
         Ausp = stream.ReadBoolean();
 

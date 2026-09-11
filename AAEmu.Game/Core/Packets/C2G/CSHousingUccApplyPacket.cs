@@ -21,6 +21,7 @@ public class CSHousingUccApplyPacket() : GamePacket(CSOffsets.CSHousingUccApplyP
 
     public override void Read(PacketStream stream)
     {
+
         ItemId = stream.ReadInt64();
         TypeValue = stream.ReadSByte();
         Index = stream.ReadSByte();

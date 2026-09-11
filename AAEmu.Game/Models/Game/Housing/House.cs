@@ -39,6 +39,7 @@ public sealed class House : Unit
     private bool _allowRecover;
     private uint _sellToPlayerId;
     private uint _sellPrice;
+    private bool _sellPublic = true;
 
     /// <summary>
     /// IsDirty flag for Houses, not all properties are taken into account here as most of the data that needs to be updated will never change
@@ -82,7 +83,15 @@ public sealed class House : Unit
                 {
                     foreach (var bindingDoodad in Template.HousingBindingDoodad)
                     {
-                        var doodad = DoodadManager.Instance.Create(ParentWorld, 0, bindingDoodad.DoodadId, this, true);
+                        // Idempotency guard: this path creates every binding it is handed and runs whenever
+                    // CurrentStep is assigned, so without this a reload or step change stacked a second
+                    // door/window on the same socket. ReconcileBoundDoodads already treats a matching
+                    // (templateId, attachPoint) pair as already present; mirror that here.
+                    if (AttachedDoodads.Any(d => d.TemplateId == bindingDoodad.DoodadId
+                                                 && d.AttachPoint == bindingDoodad.AttachPointId))
+                        continue;
+
+                    var doodad = DoodadManager.Instance.Create(ParentWorld, 0, bindingDoodad.DoodadId, this, true);
                         if (doodad == null)
                         {
                             Logger.Error($"CurrentStep: Failed to create bound doodad templateId={bindingDoodad.DoodadId} for house {Id} — template not found, skipping.");
@@ -145,6 +154,8 @@ public sealed class House : Unit
     public uint SellToPlayerId { get => _sellToPlayerId; set { _sellToPlayerId = value; _isDirty = true; } }
     public uint SellPrice { get => _sellPrice; set { _sellPrice = value; _isDirty = true; } }
     public bool AllowRecover { get => _allowRecover; set { _allowRecover = value; _isDirty = true; } }
+    /// <summary>10.x public-listing flag (sale dialog checkbox); only public sales feed the property listing.</summary>
+    public bool SellPublic { get => _sellPublic; set { _sellPublic = value; _isDirty = true; } }
 
     // House always gets its guild from its owner
     public override Expedition Expedition
@@ -300,9 +311,9 @@ public sealed class House : Unit
             command.CommandText =
                 "REPLACE INTO `housings` " +
                 "(`id`,`account_id`,`owner`,`co_owner`,`template_id`,`name`,`x`,`y`,`z`,`yaw`,`pitch`,`roll`,`current_step`,`current_action`,`permission`,`place_date`," +
-                "`protected_until`,`faction_id`,`sell_to`,`sell_price`, `allow_recover`) " +
+                "`protected_until`,`faction_id`,`sell_to`,`sell_price`, `allow_recover`, `sell_public`) " +
                 "VALUES(@id,@account_id,@owner,@co_owner,@template_id,@name,@x,@y,@z,@yaw,@pitch,@roll,@current_step,@current_action,@permission,@placedate," +
-                "@protecteduntil,@factionid,@sellto,@sellprice,@allowrecover)";
+                "@protecteduntil,@factionid,@sellto,@sellprice,@allowrecover,@sellpublic)";
 
             command.Parameters.AddWithValue("@id", Id);
             command.Parameters.AddWithValue("@account_id", AccountId);
@@ -325,6 +336,7 @@ public sealed class House : Unit
             command.Parameters.AddWithValue("@sellto", SellToPlayerId);
             command.Parameters.AddWithValue("@sellprice", SellPrice);
             command.Parameters.AddWithValue("@allowrecover", AllowRecover);
+            command.Parameters.AddWithValue("@sellpublic", SellPublic);
             command.Prepare();
             command.ExecuteNonQuery();
         }
@@ -358,7 +370,7 @@ public sealed class House : Unit
         stream.Write(Id);                                       // dbId (i32)
         stream.WriteBc(ObjId);
         stream.WritePisc(TemplateId, allStep, curStep);         // templateId, allstep, curstep
-        stream.Write((ulong)(Template?.Taxation?.Tax ?? 0));    // moneyAmount (u64)
+        stream.Write((ulong)SellPrice);                                     // Fix: sale price, was tax (client renders this as asking price)
         stream.Write(ModelId);                                  // ht (u32)
         stream.Write((ulong)CoOwnerId);                         // original owner who placed it (u64)
         stream.Write((ulong)OwnerId);                           // current owner (u64)
@@ -370,7 +382,7 @@ public sealed class House : Unit
         stream.Write(Transform.World.Position.Z);
         stream.Write(Name);                                     // house (string, cap 0x80)
         stream.Write(AllowRecover);                             // allowRecover (bool)
-        stream.Write((ulong)SellPrice);                         // sale moneyAmount (u64)
+        stream.Write((ulong)SellToPlayerId);                    // Fix: buyer id (type u64); sale price lives at moneyAmount above
         stream.Write(sellToPlayerName ?? "");                   // sellToName (string, cap 0x80)
         stream.Write(0u);                                       // TODO(v10): expandedDecoLimit — no server-side source yet
         stream.Write(0);                                        // unnamed i32 at struct +0x80

@@ -127,6 +127,9 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
                 Connection.SendPacket(new SCHouseDataPacket(houseBatch));
             }
 
+            // Warm the resident map at world entry; the townhall Region tab reads cache.
+            HousingManager.Instance.SendResidentMap(Connection, character.Id);
+
             foreach (var conflict in ZoneManager.Instance.GetConflicts())
             {
                 Connection.SendPacket(new SCConflictZoneStatePacket(conflict.ZoneGroupId, conflict.CurrentZoneState, conflict.NextStateTime));

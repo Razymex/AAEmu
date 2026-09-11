@@ -80,6 +80,7 @@
             "heirLevel": true,
 
             // ---- Housing ----
+            "houseSale": true,
             "houseTaxPrepay": true,
             "housingUcc": true,
             "rebuildHouse": true,
@@ -187,3 +188,4 @@
         }
     }
 }
+

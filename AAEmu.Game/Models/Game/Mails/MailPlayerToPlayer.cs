@@ -118,4 +118,23 @@ public class MailPlayerToPlayer : BaseMail
         }
         return true;
     }
+    /// <summary>
+    /// Puts finalized attachments back in the sender's bag. Used when the send's snapshot failed
+    /// so the items are not stranded in the mail container (nor their ids released while live).
+    /// </summary>
+    public void RollbackAttachments()
+    {
+        for (var i = Body.Attachments.Count - 1; i >= 0; i--)
+        {
+            var item = Body.Attachments[i];
+            if (item == null)
+                continue;
+            if (_sender.Inventory.MailAttachments.RemoveItem(ItemTaskType.Invalid, item, false))
+            {
+                item.SlotType = SlotType.Inventory;
+                _sender.Inventory.Bag.AddOrMoveExistingItem(ItemTaskType.Invalid, item, -1);
+            }
+        }
+        Body.Attachments.Clear();
+    }
 }

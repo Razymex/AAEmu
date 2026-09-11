@@ -1,4 +1,4 @@
-﻿using AAEmu.Game.Models.Game.Taxations;
+using AAEmu.Game.Models.Game.Taxations;
 
 namespace AAEmu.Game.Models.Game.Housing;
 
@@ -32,6 +32,11 @@ public class HousingTemplate
     public bool IsSellable { get; init; }
     public bool HeavyTax { get; init; }
     public bool AlwaysPublic { get; init; }
+    public uint RotateItemId { get; init; }
+    public uint RotateItemCount { get; init; }
+    /// <summary>10.x plot radius from housing_sizes via housing_size_id (garden_radius left the housings table).</summary>
+    public float GardenRadius { get; set; }
+    internal uint HousingSizeId { get; init; }
 
     public Dictionary<int, HousingBuildStep> BuildSteps { get; } = [];
     public HousingBindingDoodad[] HousingBindingDoodad { get; set; }

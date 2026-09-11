@@ -341,6 +341,7 @@ public static class CSOffsets
     public const ushort CSHeroAllScorePacket = 0x1A8;
     public const ushort CSHeroGiveDominionPointPacket = 0x1A9;
     public const ushort CSHeroRankingListPacket = 0x1A4;
+    public const ushort CSRotateHousePacket = 0x1A0; // Rotate Building confirm: bc u24 + zRot f32 + height f32
     public const ushort CSHousingTradeListPacket = 0x1C6;
     public const ushort CSHousingUccApplyPacket = 0x1E7;
     public const ushort CSICSBuyAAPointPacket = 0x193;

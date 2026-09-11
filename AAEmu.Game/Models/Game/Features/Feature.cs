@@ -29,6 +29,7 @@ public enum Feature
     siege = 0,
     fset_0_1_unknown = 1,  // native only - /family_title command, family appellation (1.2 allowFamilyChanges)
     use_slash_open_chat = 2,
+    houseSale = 3,  // native only - maintain-window sale icon (canSell gate in GetHouseSaleInfo)
     premium = 4,
     combatResource = 6,
 
@@ -220,3 +221,5 @@ public enum Feature
     freeDemolishHouse = 241,
     notGainLeaderShipPoint = 242,
 }
+
+

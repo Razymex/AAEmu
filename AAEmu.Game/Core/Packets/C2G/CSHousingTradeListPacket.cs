@@ -1,4 +1,5 @@
 using AAEmu.Commons.Network;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 
 namespace AAEmu.Game.Core.Packets.C2G;
@@ -12,10 +13,16 @@ namespace AAEmu.Game.Core.Packets.C2G;
 /// </remarks>
 public class CSHousingTradeListPacket() : GamePacket(CSOffsets.CSHousingTradeListPacket, 1)
 {
-    public short TypeValue { get; private set; }
+    // Fix: live capture shows a single u16 zone group id (e.g. Ynystere=17); filter/search stay client-side
+    public short ZoneGroup { get; private set; }
 
     public override void Read(PacketStream stream)
     {
-        TypeValue = stream.ReadInt16();
+
+        ZoneGroup = stream.ReadInt16();
+        while (stream.HasBytes)
+            stream.ReadByte(); // Fix: drain tail
+
+        HousingManager.Instance.HousingTradeList(Connection, ZoneGroup);
     }
 }

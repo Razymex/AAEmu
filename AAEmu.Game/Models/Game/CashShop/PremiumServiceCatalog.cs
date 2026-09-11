@@ -9,18 +9,24 @@ namespace AAEmu.Game.Models.Game.CashShop;
 /// </summary>
 public static class PremiumServiceCatalog
 {
-    public static void Send(GameConnection connection)
-    {
-        if (connection == null)
-            return;
-
-        var rows = PremiumServiceRules.BuildListed(id =>
+    /// <summary>
+    /// The listed catalog rows, built from the same client data the list packet pages out.
+    /// </summary>
+    public static IReadOnlyList<PremiumDetail> BuildRows() =>
+        PremiumServiceRules.BuildListed(id =>
         {
             var template = ItemManager.Instance.GetTemplate(id);
             if (template == null)
                 return null;
             return LocalizationManager.Instance.Get("items", "name", id, template.Name);
         });
+
+    public static void Send(GameConnection connection)
+    {
+        if (connection == null)
+            return;
+
+        var rows = BuildRows();
 
         if (rows.Count == 0)
         {

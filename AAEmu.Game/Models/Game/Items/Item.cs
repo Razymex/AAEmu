@@ -200,6 +200,7 @@ public class Item : PacketMarshaler, IComparable<Item>
     public static uint TaxCertificate => 31891;
     public static uint BoundTaxCertificate => 31892;
     public static uint AppraisalCertificate => 28085;
+    public static uint BuildingManagementTitle => 47083;
     public static uint CrestStamp => 17662;
     public static uint CrestInk => 17663;
     public static uint SheetMusic => 28051;
@@ -375,3 +376,4 @@ public class Item : PacketMarshaler, IComparable<Item>
         return true;
     }
 }
+

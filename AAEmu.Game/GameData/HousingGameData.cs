@@ -22,6 +22,7 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
     private List<ItemHousingDecoration> _housingItemHousingDecorations = [];
     private List<HousingItemHousings> _housingItemHousings = [];
     private Dictionary<uint, HousingTemplate> _housingTemplates = [];
+    private Dictionary<uint, float> _housingGardenRadii = [];
     /// <summary>
     /// <c>dominion_housings.housing_id</c> — the unique territory buildings (farm, workshop, warehouse,
     /// supervision post, altar, and their grade-2 rows). The client only loads this table.
@@ -87,6 +88,17 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
                             reader.GetBoolean("can_extend"), reader.GetBoolean("houseless")))
                         _territoryPadGroups.Add(group);
                 }
+            }
+        }
+
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT * FROM housing_sizes";
+            command.Prepare();
+            using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+            {
+                while (reader.Read())
+                    _housingGardenRadii[reader.GetUInt32("id")] = reader.GetFloat("garden_radius");
             }
         }
 
@@ -160,9 +172,12 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
                         DecoLimit = reader.GetUInt32("deco_limit"),
                         AbsoluteDecoLimit = reader.GetUInt32("absolute_deco_limit"),
                         HousingDecoLimitId = reader.GetUInt32("housing_deco_limit_id", 0),
+                        HousingSizeId = reader.GetUInt32("housing_size_id", 0),
                         IsSellable = reader.GetBoolean("is_sellable", true),
                         HeavyTax = reader.GetBoolean("heavy_tax", true),
-                        AlwaysPublic = reader.GetBoolean("always_public", true)
+                        AlwaysPublic = reader.GetBoolean("always_public", true),
+                        RotateItemId = reader.GetUInt32("rotate_item_id", 0),
+                        RotateItemCount = reader.GetUInt32("rotate_item_count", 0)
                     };
                     _housingTemplates.Add(template.Id, template);
 
@@ -307,6 +322,7 @@ public class HousingGameData : Singleton<HousingGameData>, IGameDataLoader
         {
             template.Name = LocalizationManager.Instance.Get("housings", "name", template.Id, template.Name);
             template.Taxation = TaxationsManager.Instance.taxations.GetValueOrDefault(template.TaxationId);
+            template.GardenRadius = _housingGardenRadii.GetValueOrDefault(template.HousingSizeId);
         }
 
         ResolveBindingPositionsFromClientData();

@@ -84,6 +84,7 @@ public class ModelAttachPointGameData : Singleton<ModelAttachPointGameData>, IGa
             if (brushes.Count == 0)
             {
                 meshless++;
+                Logger.Debug($"attach points: model {modelId} has no reachable mesh (no prefab/mesh chain)");
                 continue;
             }
 
@@ -98,7 +99,10 @@ public class ModelAttachPointGameData : Singleton<ModelAttachPointGameData>, IGa
             }
 
             if (helpers.Count == 0)
+            {
+                Logger.Debug($"attach points: model {modelId} meshes contain no '$' helper nodes");
                 continue;
+            }
 
             var points = new Dictionary<AttachPointKind, WorldSpawnPosition>();
             foreach (var (attachPoint, helperName) in _helperNames)
@@ -204,17 +208,47 @@ public class ModelAttachPointGameData : Singleton<ModelAttachPointGameData>, IGa
         if (subId == 0 || string.IsNullOrEmpty(subType))
             return [];
 
-        var uri = subType switch
+        // A PrefabModel is usually assembled from MANY pieces: a house alone is floor + inner/outer
+        // walls + roof + door, and this table carries 5-19 rows for one. Reading only the first row
+        // (the old LIMIT 1) missed every socket that lives on the other pieces - a house door binds
+        // to attach point 1 ($driver), which is on the inner-wall mesh, not on the floor that the
+        // first row points at. Merge every distinct piece instead.
+        if (subType == "PrefabModel")
         {
-            "PrefabModel" => QueryScalar(connection,
-                "SELECT file_path AS uri FROM prefab_elements WHERE prefab_model_id=@id ORDER BY (state_id<>1), state_id LIMIT 1", subId),
+            var meshes = new List<(string Mesh, Vector3 Offset)>();
+            var seenUris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var uri in QueryColumn(connection,
+                         "SELECT file_path AS uri FROM prefab_elements WHERE prefab_model_id=@id ORDER BY (state_id<>1), state_id", subId))
+            {
+                if (string.IsNullOrEmpty(uri) || !seenUris.Add(uri))
+                    continue;
+                meshes.AddRange(ResolvePrefabUri(uri));
+            }
+            return meshes;
+        }
+
+        var singleUri = subType switch
+        {
             "ShipModel" => QueryScalar(connection, "SELECT normal AS uri FROM ship_models WHERE id=@id", subId),
             "VehicleModel" => QueryScalar(connection, "SELECT normal AS uri FROM vehicle_models WHERE id=@id", subId),
             // ActorModel is a character rig; its attach points are bones in a .chr, not helpers in a .cgf.
             _ => null
         };
 
-        return string.IsNullOrEmpty(uri) ? [] : ResolvePrefabUri(uri);
+        return string.IsNullOrEmpty(singleUri) ? [] : ResolvePrefabUri(singleUri);
+    }
+
+    private static List<string> QueryColumn(SqliteConnection connection, string sql, uint id)
+    {
+        var res = new List<string>();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@id", id);
+        command.Prepare();
+        using var reader = new SQLiteWrapperReader(command.ExecuteReader());
+        while (reader.Read())
+            res.Add(reader.GetString("uri", string.Empty));
+        return res;
     }
 
     private static string QueryScalar(SqliteConnection connection, string sql, uint id)
@@ -255,7 +289,12 @@ public class ModelAttachPointGameData : Singleton<ModelAttachPointGameData>, IGa
         var prefabName = rest[(xmlEnd + 5)..];
 
         var meshes = GetPrefabMeshes(libraryPath);
-        return meshes.TryGetValue(prefabName, out var brushes) ? brushes : [];
+        if (!meshes.TryGetValue(prefabName, out var brushes))
+        {
+            Logger.Debug($"prefab '{prefabName}' not found in {libraryPath}");
+            return [];
+        }
+        return brushes;
     }
 
     private static string ToClientPath(string relative)
@@ -276,7 +315,7 @@ public class ModelAttachPointGameData : Singleton<ModelAttachPointGameData>, IGa
         var xml = ClientFileManager.GetFileAsString(libraryPath);
         if (string.IsNullOrWhiteSpace(xml))
         {
-            Logger.Trace($"prefab library not found: {libraryPath}");
+            Logger.Debug($"prefab library not found: {libraryPath}");
             return result;
         }
 

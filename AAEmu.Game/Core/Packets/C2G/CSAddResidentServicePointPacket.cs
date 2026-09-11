@@ -18,6 +18,7 @@ public class CSAddResidentServicePointPacket() : GamePacket(CSOffsets.CSAddResid
 
     public override void Read(PacketStream stream)
     {
+
         TypeValue = stream.ReadInt16();
         TypeValue2 = stream.ReadUInt64();
         Point = stream.ReadUInt32();

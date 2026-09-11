@@ -28,7 +28,7 @@ public interface IHousingManager
     House GetHouseById(uint houseId);
     IEnumerable<House> GetAllHouses();
     void UpdateOwnedHousingFaction(uint characterId, FactionsEnum factionId);
-    bool SetForSale(ushort houseTlId, uint price, uint buyerId, Character seller);
+    bool SetForSale(ushort houseTlId, uint price, uint buyerId, Character seller, bool isPublic = true);
     bool CancelForSale(ushort houseTlId, bool returnCertificates = true);
     bool BuyHouse(ushort houseTlId, uint money, Character character);
     void CheckHousingTaxes();
@@ -36,6 +36,11 @@ public interface IHousingManager
     bool DecorateHouse(Character player, ushort houseTlId, uint designId, Vector3 pos, Quaternion quat, uint parentObjId, ulong itemId);
     void HousingToggleAllowRecover(Character character, ushort houseTl);
     House GetHouseAtLocation(float x, float y);
+    void ResidentInfo(GameConnection connection, short zoneGroup);
+    void ResidentMembers(GameConnection connection, short zoneGroup);
+    void ResidentBalance(GameConnection connection, short zoneGroup, ulong type2);
+    void HousingTradeList(GameConnection connection, short zoneGroup);
+    void SendTownhallState(GameConnection connection, short zoneGroup);
     bool PayWeeklyTax(House house);
     bool PrepayHouseTax(GameConnection connection, ushort tlId, bool useAaPoint);
     (int, int) Save(MySqlConnection connection, MySqlTransaction transaction);

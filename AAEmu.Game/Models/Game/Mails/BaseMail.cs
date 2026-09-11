@@ -1,4 +1,4 @@
-﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Items;
 
@@ -26,6 +26,13 @@ public class BaseMail
 
     // Local helpers
     public bool IsDelivered { get; set; }
+
+    // Retention: per-side logical deletion. The row is removed physically only when both sides are gone.
+    private bool _senderDeleted;
+    private bool _receiverDeleted;
+
+    public bool SenderDeleted { get => _senderDeleted; set { _senderDeleted = value; MarkDirty(); } }
+    public bool ReceiverDeleted { get => _receiverDeleted; set { _receiverDeleted = value; MarkDirty(); } }
     public int DirtyStamp => _dirty.Stamp;
 
     public bool IsDirty

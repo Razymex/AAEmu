@@ -10,8 +10,9 @@ public interface IMailManager : ILoadable
 {
     BaseMail GetMailById(long id);
     uint GetNewMailId();
-    bool Send(BaseMail mail);
+    bool Send(BaseMail mail, bool publishNow = true);
     bool TryDeliverOn(BaseMail mail, MySqlConnection connection, MySqlTransaction transaction);
+    bool TryStageDelivery(BaseMail mail, out string targetName);
     void PublishDelivered(BaseMail mail);
     void DiscardUnpersisted(BaseMail mail);
     bool TryReturnToSender(BaseMail mail);

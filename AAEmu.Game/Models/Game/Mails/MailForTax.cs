@@ -1,4 +1,4 @@
-﻿using AAEmu.Commons.Utils;
+using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Models.Game.Housing;
@@ -59,7 +59,9 @@ public class MailForTax : BaseMail
         }
 
         //testmail 6 .houseTax title(25) "body('Test','1606565186','1607169986','1606565186','250000','50','3','0','500000','true','1')" 0 500000
-        mail.Body.Text = string.Format("body('{0}', '{1}', '{2}', '{3}', '{4}', '{5}', '{6}', '{7}', '{8}', '{9}', '{10}')",
+        // Fix: client parses 13 body args (was 11); taxType 1=HOUSING_TAX_SEAL
+        var mailTaxType = FeaturesManager.Fsets.TaxItem ? 1 : 0;
+        mail.Body.Text = string.Format("body('{0}', '{1}', '{2}', '{3}', '{4}', '{5}', '{6}', '{7}', '{8}', '{9}', '{10}', '{11}', '{12}')",
             house.Name,                                 // House Name
             Helpers.UnixTime(house.PlaceDate),          // Tax period start (this might need to be the same as tax due date)
             Helpers.UnixTime(house.ProtectionEndDate),  // Tax period end
@@ -70,15 +72,21 @@ public class MailForTax : BaseMail
             lateFees,                                   // unpaid week count (listed as late fee)
             totalTaxAmountDue,                          // amount to Pay (as gold reference)
             house.Template.HeavyTax ? "true" : "false", // is this a heavy tax building
-            normalTaxHouseCount                         // number of tax-exempt houses
+            normalTaxHouseCount,                        // number of tax-exempt houses
+            hostileTaxRate,
+            mailTaxType
             );
-        // In newer version this has a extra field at the end, which I assume is would be the hostile tax rate
+        // 10.x body carries hostile tax rate and tax type at the end (locale_helper houseTax body/13)
 
-        mail.Body.BillingAmount = totalTaxAmountDue;
+
 
         // Extra tag
         ushort extraUnknown = 0;
         mail.Header.Extra = ((long)zone.GroupId << 48) + ((long)extraUnknown << 32) + house.Id;
+        mail.Body.BillingAmount = totalTaxAmountDue;
+        // BillingAmount counts as an attachment; without this the live header says 0 and the owner
+        // can delete an unpaid bill before paying it (only a reload would recompute the count).
+        mail.Header.Attachments = mail.GetTotalAttachmentCount();
         mail.Header.Status = MailStatus.Unpaid;
 
         return true;
