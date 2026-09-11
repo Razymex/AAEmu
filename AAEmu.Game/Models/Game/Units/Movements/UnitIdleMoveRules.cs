@@ -1,4 +1,4 @@
-namespace AAEmu.Game.Models.Game.Units.Movements;
+﻿namespace AAEmu.Game.Models.Game.Units.Movements;
 
 /// <summary>
 /// Dedicate can emit a stand for every unit every tick. Those must not become
@@ -13,6 +13,9 @@ public static class UnitIdleMoveRules
     /// Callers fail open: any wider delta is handled as real movement.
     /// </summary>
     public const float SamePositionMetres = 0.15f;
+
+    /// <summary>Heading steps in a full circle; also the modulus for facing compares.</summary>
+    public const int HeadingSteps = 128;
 
     public static bool IsStationary(
         short velX, short velY, short velZ,
@@ -34,6 +37,11 @@ public static class UnitIdleMoveRules
         return dx * dx + dy * dy + dz * dz <= max * max;
     }
 
+    /// <summary>
+    /// Headings are packed into <see cref="HeadingSteps"/> steps around the circle
+    /// (<c>MathUtil.ConvertDegreeToSByteDirection</c>), so the distance between two
+    /// steps is circular: 85 and -42 are neighbours and must compare equal.
+    /// </summary>
     public static bool IsSameFacing(
         sbyte knownX, sbyte knownY, sbyte knownZ,
         sbyte moveX, sbyte moveY, sbyte moveZ,
@@ -41,9 +49,9 @@ public static class UnitIdleMoveRules
     {
         if (tolerance < 0)
             tolerance = 0;
-        return AbsDelta(knownX, moveX) <= tolerance
-               && AbsDelta(knownY, moveY) <= tolerance
-               && AbsDelta(knownZ, moveZ) <= tolerance;
+        return CircularDelta(knownX, moveX) <= tolerance
+               && CircularDelta(knownY, moveY) <= tolerance
+               && CircularDelta(knownZ, moveZ) <= tolerance;
     }
 
     public static bool ShouldSuppress(
@@ -61,9 +69,12 @@ public static class UnitIdleMoveRules
         return IsSameFacing(knownRx, knownRy, knownRz, moveRx, moveRy, moveRz);
     }
 
-    private static int AbsDelta(sbyte a, sbyte b)
+    /// <summary>Shortest heading distance around the 128-step circle.</summary>
+    private static int CircularDelta(sbyte a, sbyte b)
     {
-        var d = a - b;
-        return d < 0 ? -d : d;
+        var delta = (a - b) % HeadingSteps;
+        if (delta < 0)
+            delta += HeadingSteps;
+        return delta <= HeadingSteps / 2 ? delta : HeadingSteps - delta;
     }
 }
