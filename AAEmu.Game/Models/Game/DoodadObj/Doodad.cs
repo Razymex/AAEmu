@@ -1309,7 +1309,11 @@ public class Doodad : BaseUnit
     public override void RemoveVisibleObject(Character character)
     {
         if (character != null)
+        {
             _questReactViewerPhases.TryRemove(character.ObjId, out _);
+            _useAppliedByCaster.TryRemove(character.ObjId, out _);
+        }
+
         base.RemoveVisibleObject(character);
         character.SendPacket(new SCDoodadRemovedPacket(ObjId));
     }
