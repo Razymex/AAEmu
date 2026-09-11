@@ -211,6 +211,12 @@ public class CombatRelay
             return false;
         }
 
+        if (!ZoneDeadUnitRules.AcceptsZoneSkill(casterUnit.Hp))
+        {
+            Logger.Info("ZWStartSkill skip dead caster={0} skill={1} hp={2}", casterId, skillId, casterUnit.Hp);
+            return true;
+        }
+
         if (casterUnit is Character character &&
             HeirGameData.Instance.TryGetHeirSkillForSuccessor(skillId, out _, out _) &&
             !character.HeirSkills.IsActiveSuccessor(skillId))

@@ -8,6 +8,7 @@ using AAEmu.Game.Models.Game.Quests.Acts;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Units.Static;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.StaticValues;
 using AAEmu.Game.Models.Tasks.Quests;
@@ -27,6 +28,8 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     private static Logger Logger { get; } = LogManager.GetCurrentClassLogger();
     private bool _loaded;
     private readonly Dictionary<uint, QuestTemplate> _questTemplates = [];
+    private readonly HashSet<uint> _talkNpcIds = [];
+    private readonly HashSet<uint> _talkDoodadIds = [];
     private readonly Dictionary<byte, QuestSupplies> _supplies = [];
 
     /// <summary>
@@ -56,6 +59,13 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     {
         return _questTemplates.GetValueOrDefault(id);
     }
+
+    public bool IsQuestTalkNpc(uint npcTemplateId)
+    {
+        return QuestTalkNpcRules.IsTalkNpc(_talkNpcIds, npcTemplateId);
+    }
+
+    public IReadOnlyCollection<uint> GetQuestTalkDoodadIds() => _talkDoodadIds;
 
     /// <summary>
     /// Gets the calculated Quest Supplies for a given character Level
@@ -201,36 +211,52 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
     {
         foreach (var questTemplate in _questTemplates.Values)
         {
-            byte actIndex = 0;
+            var progressComponentIndex = 0;
             byte selectiveRewardIndex = 0;
-            var lastKey = QuestComponentKind.None;
-            foreach (var (questComponentKey, questComponentValue) in questTemplate.Components)
+            foreach (var (questComponentKey, questComponent) in questTemplate.Components)
             {
-                if (questComponentValue.KindId != lastKey)
-                {
-                    actIndex = 0;
-                    lastKey = questComponentValue.KindId;
-                }
-
                 var questActs = GetActsInComponent(questComponentKey);
-                if (questActs.Count <= 0)
+                if (questComponent.KindId == QuestComponentKind.Progress)
+                {
+                    var progressSlot = QuestObjectiveSlotRules.SlotForProgressComponent(
+                        progressComponentIndex,
+                        QuestObjectiveSlotRules.MaxSlots);
+                    foreach (var questAct in questActs)
+                    {
+                        questAct.ThisComponentObjectiveIndex = questAct.CountsAsAnObjective
+                            ? progressSlot
+                            : QuestObjectiveSlotRules.NoSlot;
+                        questAct.ParentQuestTemplate = questTemplate;
+                        if (questAct is QuestActSupplySelectiveItem)
+                        {
+                            selectiveRewardIndex++;
+                            questAct.ThisSelectiveIndex = selectiveRewardIndex;
+                        }
+                    }
+
+                    progressComponentIndex++;
+                }
+            }
+
+            var otherIndex = (byte)Math.Min(progressComponentIndex, QuestObjectiveSlotRules.MaxSlots);
+            foreach (var (questComponentKey, questComponent) in questTemplate.Components)
+            {
+                if (questComponent.KindId == QuestComponentKind.Progress)
                     continue;
 
-                // Assign references to parents
+                var questActs = GetActsInComponent(questComponentKey);
                 foreach (var questAct in questActs)
                 {
-                    questAct.ThisComponentObjectiveIndex = questAct.CountsAsAnObjective ? actIndex : (byte)0xFF;
+                    questAct.ThisComponentObjectiveIndex = QuestObjectiveSlotRules.NextIndex(
+                        ref otherIndex,
+                        questAct.CountsAsAnObjective,
+                        QuestObjectiveSlotRules.MaxSlots);
                     questAct.ParentQuestTemplate = questTemplate;
-
-                    // For selective rewards
                     if (questAct is QuestActSupplySelectiveItem)
                     {
                         selectiveRewardIndex++;
                         questAct.ThisSelectiveIndex = selectiveRewardIndex;
                     }
-
-                    if (questAct.CountsAsAnObjective)
-                        actIndex++;
                 }
             }
         }
@@ -265,7 +291,20 @@ public partial class QuestManager(ITaskManager taskManager, IZoneManager zoneMan
 
             UpdateQuestComponentActs();
         }
-        Logger.Info($"Loaded {_questTemplates.Count} quests");
+
+        _talkNpcIds.Clear();
+        _talkDoodadIds.Clear();
+        foreach (var template in _questTemplates.Values)
+        {
+            QuestTalkNpcRules.AddTalkNpcs(template, _talkNpcIds);
+            QuestTalkDoodadRules.AddTalkDoodads(template, _talkDoodadIds);
+        }
+
+        Logger.Info(
+            "Loaded {0} quests ({1} talk NPCs, {2} talk doodads)",
+            _questTemplates.Count,
+            _talkNpcIds.Count,
+            _talkDoodadIds.Count);
         _loaded = true;
 
         // Calendar quest resets use TaskManager's DateTime.UtcNow (GMT). Host local TZ is ignored.

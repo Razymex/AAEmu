@@ -22,7 +22,8 @@ public static partial class ZoneDoodadPlacementCatalog
         float X,
         float Y,
         float Z,
-        float YawDegrees);
+        float YawDegrees,
+        bool IgnoredPermanent = false);
 
     /// <summary>All placements of <paramref name="templateId"/> in a world (empty when root/files missing).</summary>
     public static IReadOnlyList<DoodadPlacement> GetByTemplate(string worldName, uint templateId)
@@ -157,15 +158,19 @@ public static partial class ZoneDoodadPlacementCatalog
                 continue;
 
             files++;
+            var ignore = ReadCellIgnoreTemplateIds(cellDir);
             foreach (var place in ParsePlacements(path, cellX, cellY))
             {
-                if (!byTemplate.TryGetValue(place.TemplateId, out var list))
+                var row = ignore.Count == 0 || !ignore.Contains(place.TemplateId)
+                    ? place
+                    : place with { IgnoredPermanent = true };
+                if (!byTemplate.TryGetValue(row.TemplateId, out var list))
                 {
                     list = [];
-                    byTemplate[place.TemplateId] = list;
+                    byTemplate[row.TemplateId] = list;
                 }
 
-                list.Add(place);
+                list.Add(row);
                 placements++;
             }
         }
@@ -228,6 +233,53 @@ public static partial class ZoneDoodadPlacementCatalog
         return list;
     }
 
+    /// <summary>
+    /// <c>doodadType</c> ids from that cell's <c>doodad_open_*.g</c> /
+    /// <c>ignore_*doodad*.g</c> lists. Those rows stay in the catalog for
+    /// event steps; they are not a permanent boot plant.
+    /// </summary>
+    public static HashSet<uint> ParseIgnoreDoodadTypes(string text)
+    {
+        var set = new HashSet<uint>();
+        if (string.IsNullOrWhiteSpace(text))
+            return set;
+
+        foreach (Match m in IgnoreTypeRegex().Matches(text))
+        {
+            if (uint.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) &&
+                id != 0)
+            {
+                set.Add(id);
+            }
+        }
+
+        return set;
+    }
+
+    private static HashSet<uint> ReadCellIgnoreTemplateIds(string cellDir)
+    {
+        var set = new HashSet<uint>();
+        foreach (var path in Directory.EnumerateFiles(cellDir, "*.g"))
+        {
+            var name = Path.GetFileName(path);
+            if (!IsIgnoreListFileName(name))
+                continue;
+            set.UnionWith(ParseIgnoreDoodadTypes(File.ReadAllText(path)));
+        }
+
+        return set;
+    }
+
+    internal static bool IsIgnoreListFileName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            return false;
+        if (fileName.StartsWith("doodad_open", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return fileName.Contains("ignore", StringComparison.OrdinalIgnoreCase) &&
+               fileName.Contains("doodad", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool TryF(string s, out float v) =>
         float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v);
 
@@ -249,4 +301,7 @@ public static partial class ZoneDoodadPlacementCatalog
 
     [GeneratedRegex(@"(?m)^doodad\r?\n", RegexOptions.CultureInvariant)]
     private static partial Regex SplitDoodadBlocks();
+
+    [GeneratedRegex(@"doodadType\s+(\d+)", RegexOptions.CultureInvariant)]
+    private static partial Regex IgnoreTypeRegex();
 }

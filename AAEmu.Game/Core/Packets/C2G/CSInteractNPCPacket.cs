@@ -1,5 +1,6 @@
 using AAEmu.Commons.Network;
 using AAEmu.Game;
+using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.NPChar;
@@ -34,6 +35,14 @@ public class CSInteractNPCPacket() : GamePacket(CSOffsets.CSInteractNPCPacket, 1
 
         // A zero-entry table is the native representation of no known aggro for this NPC.
         Connection.SendPacket(new SCAiAggroPacket(objId));
+
+        // F-talk only sent this packet. Without the skill list the client opens
+        // a directing window that cannot confirm (no start packet). Same body
+        // as right-click CSStartInteraction, extraInfo=1 / empty pick.
+        var option = NpcInteractionRules.PrimarySkill(
+            npc.Template,
+            QuestManager.Instance.IsQuestTalkNpc(npc.TemplateId));
+        character.SendPacket(new SCNpcInteractionSkillListPacket(objId, 0, 1, 0, 0, 0, [option]));
 
         if (WorldIntegration.ZoneAuthority)
             WorldIntegration.RelayInteractNpcToZone?.Invoke(character.ObjId, objId, false);

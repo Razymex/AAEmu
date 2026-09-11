@@ -1,6 +1,7 @@
 ﻿using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.DoodadObj;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Units;
 
@@ -18,16 +19,40 @@ public class DoodadFuncQuest : DoodadFuncTemplate
 
         if (caster is Character character)
         {
-            if (!character.Quests.HasQuest(QuestId))
+            character.Quests.ObserveQuestDoodad(owner.ObjId, owner.TemplateId);
+
+            if (character.Quests.ActiveQuests.TryGetValue(QuestId, out var quest)
+                && quest.Template != null
+                && DoodadQuestFuncRules.ShouldOfferComplete(
+                    quest.GetQuestObjectiveStatus(),
+                    quest.Template.LetItDone))
             {
-                if (caster is Character player)
-                    player.SendPacket(new SCDoodadQuestAcceptPacket(owner.ObjId, QuestId));
-                // character.Quests.AddQuestFromDoodad(QuestId, owner.ObjId);
+                Logger.Info(
+                    "DoodadFuncQuest complete-offer tpl={0} obj={1} quest={2}",
+                    owner.TemplateId,
+                    owner.ObjId,
+                    QuestId);
+                character.SendPacket(new SCDoodadCompleteQuestPacket(owner.ObjId, QuestId));
+                return;
             }
-            else
-            {
-                QuestManager.Instance.DoReportEvents(character, QuestId, 0, owner.ObjId, 0);
-            }
+
+            if (character.Quests.HasQuest(QuestId))
+                return;
+
+            var repeatable = QuestManager.Instance.GetTemplate(QuestId)?.Repeatable == true;
+            if (!DoodadQuestFuncRules.ShouldOfferAccept(
+                    QuestKindId,
+                    hasQuest: false,
+                    character.Quests.HasQuestCompleted(QuestId),
+                    repeatable))
+                return;
+
+            Logger.Info(
+                "DoodadFuncQuest offer tpl={0} obj={1} quest={2}",
+                owner.TemplateId,
+                owner.ObjId,
+                QuestId);
+            character.SendPacket(new SCDoodadQuestAcceptPacket(owner.ObjId, QuestId));
         }
     }
 }

@@ -7,6 +7,7 @@ using AAEmu.Game.Core.Managers.UnitManagers;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
 using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.CommonFarm.Static;
@@ -15,6 +16,7 @@ using AAEmu.Game.Models.Game.DoodadObj.Static;
 using AAEmu.Game.Models.Game.DoodadObj.Templates;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
+using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using AAEmu.Game.Models.Tasks.Doodads;
@@ -498,8 +500,12 @@ public class Doodad : BaseUnit
 
             if (allFuncsForGroup.Count <= 0)
             {
-                // Phase has no funcs
-                return;
+                // Start phases can be phase-func-only gates (QuestReact → talkable group).
+                var phaseBefore = FuncGroupId;
+                var stopOnPhaseGate = DoChangePhase(caster, (int)FuncGroupId);
+                if (stopOnPhaseGate || FuncGroupId == phaseBefore)
+                    return;
+                continue;
             }
 
             if (skillId == 0)
@@ -522,13 +528,23 @@ public class Doodad : BaseUnit
             }
             else
             {
+                if (player != null &&
+                    funcWithSkill != null &&
+                    DoodadManager.Instance.GetFuncTemplate(funcWithSkill.FuncId, funcWithSkill.FuncType)
+                        is DoodadFuncQuest)
+                {
+                    funcWithSkill = SelectQuestFunc(player, allFuncsForGroup);
+                }
+
                 var completesFromClientPacket = funcWithSkill != null &&
                     DoodadManager.Instance.GetFuncTemplate(funcWithSkill.FuncId, funcWithSkill.FuncType)
                         ?.CompletesFromClientPacket == true;
                 if (DoFunc(caster, startedSkillId, funcWithSkill))
                 {
-                    // FuncGroupId will be equal to either the current phase, func.NextPhase, or OverridePhase
-                    if (!completesFromClientPacket)
+                    // Stay-on-phase funcs (quest offer, next_phase -1) leave ToNextPhase false.
+                    // Re-entering the same phase still broadcasts SCDoodadPhaseChanged and
+                    // interrupts the client's directing Accept control.
+                    if (ShouldApplyPhaseAfterSuccessfulFunc(completesFromClientPacket, ToNextPhase))
                         DoChangePhase(caster, (int)FuncGroupId);
                     return;
                 }
@@ -582,6 +598,53 @@ public class Doodad : BaseUnit
 
             skillId = 0;
         }
+    }
+
+    private static DoodadFunc SelectQuestFunc(Character character, List<DoodadFunc> funcs)
+    {
+        return DoodadQuestFuncRules.Select(
+            funcs,
+            func =>
+            {
+                if (DoodadManager.Instance.GetFuncTemplate(func.FuncId, func.FuncType) is DoodadFuncQuest quest)
+                    return quest.QuestKindId;
+                return 0u;
+            },
+            func =>
+            {
+                if (DoodadManager.Instance.GetFuncTemplate(func.FuncId, func.FuncType) is DoodadFuncQuest quest)
+                    return quest.QuestId;
+                return 0u;
+            },
+            character.Quests.HasQuest,
+            character.Quests.HasQuestCompleted,
+            questId => QuestManager.Instance.GetTemplate(questId)?.Repeatable == true,
+            questId => CanStartDoodadQuest(character, questId));
+    }
+
+    private static bool CanStartDoodadQuest(Character character, uint questId)
+    {
+        var template = QuestManager.Instance.GetTemplate(questId);
+        if (template == null || !template.MeetsContextRequirements(character))
+            return false;
+
+        foreach (var component in template.GetComponents(QuestComponentKind.Start))
+        {
+            if (!UnitRequirementsGameData.Instance.CanComponentRun(component, character))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// After a successful <see cref="DoFunc"/>, only walk to the next phase when that func
+    /// actually advanced. A stay (quest offer, <c>next_phase</c> -1) must not rebroadcast
+    /// the current phase.
+    /// </summary>
+    internal static bool ShouldApplyPhaseAfterSuccessfulFunc(bool completesFromClientPacket, bool toNextPhase)
+    {
+        return !completesFromClientPacket && toNextPhase;
     }
 
     /// <summary>
@@ -1094,8 +1157,25 @@ public class Doodad : BaseUnit
     /// <param name="character"></param>
     public override void AddVisibleObject(Character character)
     {
+        TryApplyQuestReact(character);
         character.SendPacket(new SCDoodadCreatedPacket(this));
         base.AddVisibleObject(character);
+    }
+
+    /// <summary>
+    /// QuestReact is character-dependent and skipped at boot. Apply it when a player first
+    /// streams the doodad so the Created packet already carries the talkable phase.
+    /// </summary>
+    private void TryApplyQuestReact(Character character)
+    {
+        if (character == null || FuncGroupId == 0)
+            return;
+
+        var phaseFuncs = DoodadManager.Instance.GetPhaseFunc(FuncGroupId);
+        if (phaseFuncs.Count == 0 || !phaseFuncs.Exists(f => f.FuncType == nameof(DoodadFuncQuestReact)))
+            return;
+
+        DoChangePhase(character, (int)FuncGroupId);
     }
 
     /// <summary>

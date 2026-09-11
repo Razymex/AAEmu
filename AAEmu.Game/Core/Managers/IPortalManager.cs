@@ -14,6 +14,7 @@ public interface IPortalManager : ILoadable
     Portal GetRespawnById(uint id);
     Portal GetWorldGatesBySubZoneId(uint subZoneId);
     Portal GetWorldGatesById(uint id);
+    Portal GetReturnPoint(uint returnPointId);
     uint GetDistrictReturnPoint(uint districtId);
     uint GetDistrictReturnPoint(uint districtId, FactionsEnum factionId);
     uint GetDistrictIdByReturnPoint(uint returnPointId, FactionsEnum factionId);

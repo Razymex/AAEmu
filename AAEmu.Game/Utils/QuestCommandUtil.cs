@@ -4,6 +4,7 @@ using AAEmu.Game.Models.Game;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.NPChar;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Utils.Scripts;
 using Discord;
@@ -145,6 +146,35 @@ public class QuestCommandUtil
                 else
                 {
                     character.SendMessage("[Quest] Proper usage: /quest remove <questId>");
+                }
+                break;
+            case "complete":
+                // Stamp a finished quest on the client without replaying it.
+                // Needed when Reward ran (bitset in MySQL) but SCCompletedQuests
+                // never went out, so directing still offers the previous step.
+                if (args.Length >= 2 && uint.TryParse(args[1], out questId))
+                {
+                    var template = QuestManager.Instance.GetTemplate(questId);
+                    if (template == null)
+                    {
+                        CommandManager.SendErrorText(command, messageOutput, $"No quest {questId}");
+                        break;
+                    }
+
+                    if (character.Quests.HasQuest(questId))
+                        character.Quests.DropQuest(questId, true, false);
+
+                    var completedBlock = character.Quests.SetCompletedQuestFlag(questId, true);
+                    character.Quests.SendCompletedBlock(completedBlock);
+                    var completedComponentId = QuestCompletedWire.ComponentIdForCompletedPacket(0, template);
+                    character.SendPacket(new SCQuestContextCompletedPacket(questId, completedComponentId));
+                    character.Quests.Send();
+                    CommandManager.SendNormalText(command, messageOutput,
+                        $"Quest @QUEST_NAME({questId}) ({questId}) marked complete. Char-select if the journal still shows it.");
+                }
+                else
+                {
+                    CommandManager.SendErrorText(command, messageOutput, "Proper usage: /quest complete <questId>");
                 }
                 break;
             case "uncomplete":

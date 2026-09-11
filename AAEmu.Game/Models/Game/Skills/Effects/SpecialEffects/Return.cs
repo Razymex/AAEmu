@@ -1,4 +1,5 @@
 ﻿using AAEmu.Game.Core.Managers;
+using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
 using AAEmu.Game.Models.Game.Teleport;
@@ -40,81 +41,86 @@ public class Return : SpecialEffectAction
         }
         else
         {
-            // Worldgates
+            // value1 is return_points.id — worldgate / recall JSON, then return_point.g.
             returnPointId = (uint)value1;
-            trp = PortalManager.Instance.GetWorldGatesById(returnPointId);
+            trp = PortalManager.Instance.GetReturnPoint(returnPointId);
         }
 
         if (trp != null)
         {
-            // return to main_world
-            character.DisabledSetPosition = true;
-            character.SendPacket(
-                new SCLoadInstancePacket(
-                    1,
-                    trp.ZoneId,
-                    trp.X,
-                    trp.Y,
-                    trp.Z,
-                    0,
-                    0,
-                    trp.Yaw.DegToRad()
-                )
-            );
+            if (!ReturnTeleportRules.HasValidDestination(trp.X, trp.Y, trp.Z))
+            {
+                Logger.Warn("Return refused origin dest point={0}", returnPointId);
+                return;
+            }
 
-            character.Transform = new Transform(
+            ApplyReturn(
                 character,
-                null,
+                ReturnTeleportRules.LoadWorldId(trp.WorldId, WorldManager.DefaultWorldTemplateId),
+                WorldManager.DefaultInstanceId,
                 trp.ZoneId,
-                0,
                 trp.X,
                 trp.Y,
                 trp.Z,
                 trp.Yaw.DegToRad());
-            //character.MainWorldPosition = null; // we will not delete the return point to the main world
-        }
-        else if (character.MainWorldPosition != null)
-        {
-            character.DisabledSetPosition = true;
-            character.SendPacket(
-                new SCLoadInstancePacket(
-                    character.MainWorldPosition.InstanceId,
-                    character.MainWorldPosition.ZoneId,
-                    character.MainWorldPosition.World.Position.X,
-                    character.MainWorldPosition.World.Position.Y,
-                    character.MainWorldPosition.World.Position.Z,
-                    character.MainWorldPosition.World.Rotation.X.DegToRad(),
-                    character.MainWorldPosition.World.Rotation.Y.DegToRad(),
-                    character.MainWorldPosition.World.Rotation.Z.DegToRad()
-                )
-            );
-
-            character.Transform = character.MainWorldPosition.Clone(character);
-            //character.MainWorldPosition = null; // we will not delete the return point to the main world
-        }
-
-        if (trp == null)
-        {
-            Logger.Info($"Return: Need to add information to worldgates.json:\r\n" +
-                        $"        \"Id\": {value1}\r\n" +
-                        $"        \"ZoneId\": {character.Transform.ZoneId},\r\n" +
-                        $"        \"X\": {character.Transform.World.Position.X},\r\n" +
-                        $"        \"Y\": {character.Transform.World.Position.Y},\r\n" +
-                        $"        \"Z\": {character.Transform.World.Position.Z},\r\n" +
-                        $"        \"Yaw\": {character.Transform.World.Rotation.Z},\r\n" +
-                        $"        \"SubZoneId\": {character.SubZoneId}\r\n" +
-                        $"The coordinates need to be set correctly, these are just an example.");
             return;
         }
 
-        caster.DisabledSetPosition = true;
-        character.SendPacket(
-            new SCTeleportUnitPacket(
-            TeleportReason.MoveToLocation,
-            0,
-            trp.X,
-            trp.Y,
-            trp.Z,
-            trp.Yaw.DegToRad()));
+        if (character.MainWorldPosition != null)
+        {
+            var home = character.MainWorldPosition.World.Position;
+            if (!ReturnTeleportRules.HasValidDestination(home.X, home.Y, home.Z))
+            {
+                Logger.Warn("Return refused origin MainWorldPosition for {0}", character.Name);
+                return;
+            }
+
+            var homeRot = character.MainWorldPosition.World.Rotation;
+            ApplyReturn(
+                character,
+                ReturnTeleportRules.LoadWorldId(character.MainWorldPosition.WorldId, WorldManager.DefaultWorldTemplateId),
+                character.MainWorldPosition.InstanceId,
+                character.MainWorldPosition.ZoneId,
+                home.X,
+                home.Y,
+                home.Z,
+                homeRot.Z.DegToRad());
+            return;
+        }
+
+        Logger.Info($"Return: Need to add information to worldgates.json:\r\n" +
+                    $"        \"Id\": {value1}\r\n" +
+                    $"        \"ZoneId\": {character.Transform.ZoneId},\r\n" +
+                    $"        \"X\": {character.Transform.World.Position.X},\r\n" +
+                    $"        \"Y\": {character.Transform.World.Position.Y},\r\n" +
+                    $"        \"Z\": {character.Transform.World.Position.Z},\r\n" +
+                    $"        \"Yaw\": {character.Transform.World.Rotation.Z},\r\n" +
+                    $"        \"SubZoneId\": {character.SubZoneId}\r\n" +
+                    $"The coordinates need to be set correctly, these are just an example.");
+    }
+
+    private static void ApplyReturn(
+        Character character,
+        uint destWorldId,
+        uint destInstanceId,
+        uint zoneId,
+        float x,
+        float y,
+        float z,
+        float yawRad)
+    {
+        if (ReturnTeleportRules.NeedsInstanceLoad(character.Transform.InstanceId, destInstanceId))
+        {
+            character.DisabledSetPosition = true;
+            character.SendPacket(new SCLoadInstancePacket(destWorldId, zoneId, x, y, z, 0, 0, yawRad));
+            character.Transform = new Transform(character, null, zoneId, destInstanceId, x, y, z, yawRad);
+        }
+        else
+        {
+            character.SetPosition(x, y, z, 0f, 0f, yawRad);
+            character.Transform.FinalizeTransform();
+        }
+
+        character.SendPacket(new SCTeleportUnitPacket(TeleportReason.MoveToLocation, 0, x, y, z, yawRad));
     }
 }

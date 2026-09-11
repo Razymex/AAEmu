@@ -2,6 +2,7 @@
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Game;
+using AAEmu.Game.Models.Game.Teleport;
 
 namespace AAEmu.Game.Core.Packets.C2G;
 
@@ -23,6 +24,12 @@ public class CSTeleportEndedPacket() : GamePacket(CSOffsets.CSTeleportEndedPacke
         // Transform on the old cell, so later GM spawns used dry-land coords
         // while the client was already at the destination.
         me.DisabledSetPosition = false;
+        if (!ReturnTeleportRules.ShouldApplyEndedPosition(x, y, z))
+        {
+            Logger.Warn("TeleportEnded ignored origin for {0} zone={1}", me.Name, me.Transform.ZoneId);
+            return;
+        }
+
         var rot = me.Transform.World.Rotation;
         me.SetPosition(x, y, z, rot.X, rot.Y, rot.Z);
         me.Transform.FinalizeTransform();

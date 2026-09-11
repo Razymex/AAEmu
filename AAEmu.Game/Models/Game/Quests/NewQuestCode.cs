@@ -1,6 +1,7 @@
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Packets.G2C;
 using AAEmu.Game.Models.Game.Char;
+using AAEmu.Game.Models.Game.NPChar;
 using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Units;
 
@@ -58,6 +59,13 @@ public partial class Quest
         // right-hand quest window empty despite 0x18C/0x18E flowing.
         if (Status == QuestStatus.Invalid || Status == QuestStatus.Dropped)
             Status = QuestStatus.Progress;
+
+        if (QuestNoneSceneRules.ShouldStartSceneOnAccept(Template))
+        {
+            var cinemaId = QuestCinemaRules.FirstCinema(Template, QuestComponentKind.Progress);
+            Owner?.Quests?.BindPlayingCinema(cinemaId);
+            CreditNoneSceneActs();
+        }
 
         Owner.SendPacket(new SCQuestContextStartedPacket(this, ComponentId));
         Logger.Debug($"StartQuest, Quest:{TemplateId}, Player {Owner.Name} ({Owner.Id}) status={(byte)Status}");
@@ -148,18 +156,27 @@ public partial class Quest
                 case QuestComponentKind.Reward:
                     // Reward is the last possible step
 
-                    // Mark quest as completed
+                    // Mark quest as completed and refresh the client's bitset block before
+                    // SCQuestContextCompleted so Accept unit_req kind-31 sees the prior finish.
                     var completedBlock = Owner.Quests.SetCompletedQuestFlag(TemplateId, true);
-                    // copy body data for packet
-                    var body = new byte[8];
-                    completedBlock.Body.CopyTo(body, 0);
+                    Owner.Quests.SendCompletedBlock(completedBlock);
 
                     // Daily schedule: push Done status before remove so the UI still has questType.
                     if (Owner is Character character)
                         TodayAssignmentManager.Instance.NotifyQuestCompleted(character, TemplateId);
 
+                    var nextQuestIds = QuestRewardAcceptRules.NextQuestIds(Template).ToArray();
+                    var completedComponentId = QuestCompletedWire.ComponentIdForCompletedPacket(ComponentId, Template);
                     Owner.Quests.DropQuest(TemplateId, false, false);
-                    Owner.SendPacket(new SCQuestContextCompletedPacket(TemplateId, 0));
+                    Owner.SendPacket(new SCQuestContextCompletedPacket(TemplateId, completedComponentId));
+
+                    foreach (var nextQuestId in nextQuestIds)
+                    {
+                        if (Owner.CurrentTarget is Npc npc)
+                            Owner.Quests.AddQuest(nextQuestId, false, QuestAcceptorType.Npc, npc.TemplateId);
+                        else
+                            Owner.Quests.AddQuest(nextQuestId);
+                    }
 
                     return;
                 default:
@@ -200,6 +217,14 @@ public partial class Quest
         // Initialize Acts for this Step (if any)
         if (QuestSteps.TryGetValue(value, out var questSteps))
             questSteps.InitializeStep();
+
+        if (value == QuestComponentKind.Progress)
+        {
+            // Only this quest's Progress cinema. Fall-through to Ready/Start
+            // would steal the playing film when the next quest has no Progress.
+            var cinemaId = QuestCinemaRules.FirstCinema(Template, QuestComponentKind.Progress);
+            Owner?.Quests?.BindAndCreditPlayingCinema(cinemaId);
+        }
 
         // Trigger OnQuestStepChanged event, even if this step is not available
         Owner?.Events?.OnQuestStepChanged(Owner, new OnQuestStepChangedArgs { QuestId = TemplateId, Step = value });
@@ -374,5 +399,24 @@ public partial class Quest
     public void StartingEvaluation()
     {
         RequestEvaluationFlag = false;
+    }
+
+    /// <summary>
+    /// None acts on a scene quest are the film. Credit them on accept (or
+    /// again if the client retries the doodad while this quest is still live).
+    /// </summary>
+    public void CreditNoneSceneActs()
+    {
+        if (!QuestSteps.TryGetValue(QuestComponentKind.None, out var none))
+            return;
+
+        foreach (var component in none.Components.Values)
+        {
+            component.OverrideObjectiveCompleted = true;
+            foreach (var act in component.Acts)
+                act.OverrideObjectiveCompleted = true;
+        }
+
+        RequestEvaluation();
     }
 }

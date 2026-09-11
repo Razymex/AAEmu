@@ -285,15 +285,8 @@ public class LootPack
                             }
                         }
                     }
-                    // Merge quests items in selected items
-                    if (tmpSelectedQuestItemsByGroup.Count > 0)
-                        foreach (var loot in tmpSelectedQuestItemsByGroup[groupNo])
-                        {
-                            // Skip quest item if it was randomly selected
-                            if (selectedItemsByGroup[groupNo].Contains(loot))
-                                continue;
-                            selectedItemsByGroup[groupNo].Add(loot);
-                        }
+                    // Quest items in this group always drop, even when the non-quest roll missed.
+                    LootPackRules.MergeQuestItems(selectedItemsByGroup, tmpSelectedQuestItemsByGroup, groupNo);
                 }
             }
             // No matches found

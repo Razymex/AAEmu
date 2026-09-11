@@ -31,7 +31,7 @@ public class QuestActConReportDoodad(QuestComponentTemplate parentComponent) : Q
 
     public override void FinalizeQuest(Quest quest, QuestAct questAct)
     {
-        quest.Owner.Events.OnReportDoodad += questAct.OnReportDoodad;
+        quest.Owner.Events.OnReportDoodad -= questAct.OnReportDoodad;
         base.FinalizeQuest(quest, questAct);
     }
 
@@ -45,15 +45,21 @@ public class QuestActConReportDoodad(QuestComponentTemplate parentComponent) : Q
         var minimumProgress = questAct.Template.ParentComponent.ParentQuestTemplate.LetItDone
             ? QuestObjectiveStatus.CanEarlyComplete
             : QuestObjectiveStatus.QuestComplete;
-        var isReady = questAct.QuestComponent.Parent.Parent.GetQuestObjectiveStatus() >= minimumProgress;
+        var quest = questAct.QuestComponent.Parent.Parent;
+        var isReady = quest.GetQuestObjectiveStatus() >= minimumProgress;
         // TODO: Check doodad range?
+
+        Logger.Debug(
+            $"QuestActConReportDoodad({DetailId}).OnReportDoodad: Quest: {quest.TemplateId}, Owner {quest.Owner.Name} ({quest.Owner.Id}), DoodadId {args.DoodadId}, Selected {args.Selected}, isReady {isReady}");
 
         if (!isReady)
             return;
 
+        // Same as ReportNpc: CSCompleteQuestContext carries the selective reward pick.
+        quest.SelectedRewardIndex = args.Selected;
         questAct.OverrideObjectiveCompleted = true;
-        if (questAct.QuestComponent.Parent.Parent.Step == QuestComponentKind.Progress)
-            questAct.QuestComponent.Parent.Parent.Step = QuestComponentKind.Ready;
+        if (quest.Step <= QuestComponentKind.Progress)
+            quest.Step = QuestComponentKind.Ready;
         questAct.RequestEvaluation(); // Manual request since this does not use objective counters to trigger
     }
 }

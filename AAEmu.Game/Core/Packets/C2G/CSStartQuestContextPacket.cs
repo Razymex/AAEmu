@@ -17,6 +17,13 @@ public class CSStartQuestContextPacket() : GamePacket(CSOffsets.CSStartQuestCont
         _doodadObjId = stream.ReadBc();        // doodadObjId
         _sphereId = stream.ReadUInt32();       // selected
 
+        Logger.Info(
+            "CSStartQuestContext quest={0} npcObj={1} doodadObj={2} sphere={3}",
+            _questContextId,
+            _npcObjId,
+            _doodadObjId,
+            _sphereId);
+
         if (_npcObjId > 0)
             Connection.ActiveChar.Quests.AddQuestFromNpc(_questContextId, _npcObjId);
         else if (_doodadObjId > 0)

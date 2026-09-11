@@ -123,13 +123,12 @@ public class CSSelectCharacterPacket() : GamePacket(CSOffsets.CSSelectCharacterP
             Connection.SendPacket(new SCUpdateAdditionalSkillPointPacket());
 
             foreach (var houseBatch in houses.Chunk(SCHouseDataPacket.MaxEntries))
-            {
                 Connection.SendPacket(new SCHouseDataPacket(houseBatch));
-            }
 
             foreach (var conflict in ZoneManager.Instance.GetConflicts())
             {
-                Connection.SendPacket(new SCConflictZoneStatePacket(conflict.ZoneGroupId, conflict.CurrentZoneState, conflict.NextStateTime));
+                Connection.SendPacket(new SCConflictZoneStatePacket(
+                    conflict.ZoneGroupId, conflict.CurrentZoneState, conflict.NextStateTime));
             }
 
             // 10.0.2.13: SCFactionList (opcode 0x08) was removed; system-faction descriptors are

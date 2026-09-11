@@ -4,6 +4,8 @@ using AAEmu.Game.Core.Managers.World;
 using AAEmu.Game.Core.Network.Connections;
 using AAEmu.Game.Core.Network.Game;
 using AAEmu.Game.Core.Packets.G2C;
+using AAEmu.Game.GameData;
+using AAEmu.Game.Models;
 using AAEmu.Game.Models.Game.Chat;
 using AAEmu.Game.Models.Game.Items;
 
@@ -61,6 +63,16 @@ public class CSNotifyInGamePacket() : GamePacket(CSOffsets.CSNotifyInGamePacket,
         // Zone already owns presence when ZoneAuthority + TryEnterZone succeeded above.
         Connection.ActiveChar.Spawn();
 
+        // GetWorldLevel binds to the local player unit created by Spawn. Sending it in the
+        // select burst leaves that unit link null and the HUD provider null-derefs.
+        Connection.ActiveChar.SendPacket(new SCWorldLevelInfoPacket(
+            WorldLevelGameData.Instance.CreateFor(
+                Connection.ActiveChar.Level,
+                AppConfiguration.Instance.World.PlayerLevelCap)));
+
+        // In-world start/complete checks read the journal after the local player exists.
+        Connection.ActiveChar.Quests.SendInitialState();
+
         // DO NOT seed the physics clock from the server's Environment.TickCount64 here. That is the SERVER
         // uptime domain (~tens of millions of ms), NOT the client's physics clock (which starts near 0 at
         // client launch). Seeding it made every self/NPC stand carry a tPhy ~89,000,000 ms in the client's
@@ -104,12 +116,6 @@ public class CSNotifyInGamePacket() : GamePacket(CSOffsets.CSNotifyInGamePacket,
         // client crashes on show without them. The reference server sends this (all-zero, no active events) at
         // world entry — emit it here so the window has data before it renders.
         Connection.ActiveChar.SendPacket(new SCEventInfoCountPacket());
-
-        // World-level state for the GetWorldLevel HUD provider. Must be sent AFTER Spawn() (above): the client's
-        // world-level manager binds this data to the local player unit, so the unit has to exist or its link
-        // (*(ClientPlayer+104)+8) stays null and the provider null-derefs when the player-frame event window shows.
-        // The reference emits 0x038A ~4s after NotifyInGame, never in the select burst.
-        Connection.ActiveChar.SendPacket(new SCWorldLevelInfoPacket());
 
         // Daily schedule: load persisted contracts for today, then reset-count budget.
         TodayAssignmentManager.Instance.OnCharacterEnterWorld(Connection.ActiveChar);

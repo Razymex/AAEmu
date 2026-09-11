@@ -187,6 +187,7 @@ public static class Program
             // tracked units applies the same window rules as a live announcement.
             NpcScheduleGate.Start();
             NpcSpawnRelay.RemirrorAllZones();
+            QuestTalkDoodads.EnsureAllWorlds();
             zoneHost.ConfigureWarmWorldFactory(
                 templateName =>
                 {

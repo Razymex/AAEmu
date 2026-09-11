@@ -3,6 +3,7 @@
 public static class SkillsEnum
 {
     // Skills used by NPCs when talking to them, names taken from the english localization
+    public const uint NpcTalk = 13877; // 대화하기 — first skill on a quest NPC
     public const uint UseWarehouse = 13238;
     public const uint ChangeSkillsets = 12082;
     public const uint UseAuctioneer = 12083;

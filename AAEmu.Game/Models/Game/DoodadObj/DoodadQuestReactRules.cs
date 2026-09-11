@@ -1,0 +1,36 @@
+using AAEmu.Game.Models.Game.Quests.Static;
+
+namespace AAEmu.Game.Models.Game.DoodadObj;
+
+/// <summary>
+/// Compact <c>doodad_func_quest_reacts</c> match. A row moves the doodad when that
+/// character's quest status (and optional component) matches.
+/// </summary>
+public static class DoodadQuestReactRules
+{
+    public static bool MatchesStatus(uint requiredStatusId, QuestStatus actualStatus)
+    {
+        return requiredStatusId == (uint)actualStatus;
+    }
+
+    /// <summary>
+    /// <paramref name="requiredComponentId"/> 0 means any component. A Ready-step row may name
+    /// the Ready component even when the live <c>ComponentId</c> was cleared on the last step.
+    /// </summary>
+    public static bool MatchesComponent(
+        uint requiredComponentId,
+        uint activeComponentId,
+        bool readyStepContainsRequiredComponent)
+    {
+        if (requiredComponentId == 0)
+            return true;
+        if (activeComponentId == requiredComponentId)
+            return true;
+        return readyStepContainsRequiredComponent;
+    }
+
+    public static bool ShouldAdvance(int nextPhase, uint currentFuncGroupId)
+    {
+        return nextPhase > 0 && (uint)nextPhase != currentFuncGroupId;
+    }
+}

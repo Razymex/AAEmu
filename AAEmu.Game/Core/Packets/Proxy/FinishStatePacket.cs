@@ -28,10 +28,12 @@ public class FinishStatePacket() : GamePacket(PPOffsets.FinishStatePacket, 2)
                     initialConfig.LobbyImmersiveMode));
                 Connection.SendPacket(new SCInitialConfigPacket());
 
-                // Lobby config-burst order verified against a live 10.0.2.13 capture
-                // SCServerInfo then SCWorldContent, then SCAccountInfo. SCWorldContent carries the content-filter
-                // table (sent empty here = no content blocked).
-                Connection.SendPacket(new SCServerInfoPacket());
+                // Lobby config-burst: SCServerInfo, SCWorldContent, then SCAccountInfo.
+                // SCWorldContent carries the content-filter table (empty here = nothing blocked).
+                // serverOpenTime is unix seconds. The client picks world_level_hard_caps
+                // by calendar days since this stamp; "now" is the first band and hides
+                // main-quest Accept. Publish the compact get_quest row instead.
+                Connection.SendPacket(new SCServerInfoPacket(WorldLevelGameData.Instance.ServerOpenUnixTime()));
                 Connection.SendPacket(new SCWorldContentPacket());
 
                 // SCTrionConfig does not exist in the 10.0.2.13 client (its opcode 0x07 now belongs to

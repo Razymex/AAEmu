@@ -15,6 +15,7 @@ using AAEmu.Game.Models.Game.Quests.Static;
 using AAEmu.Game.Models.Game.Quests.Templates;
 using AAEmu.Game.Models.Spheres;
 using AAEmu.Game.Models.Game.Skills;
+using AAEmu.Game.Models.Game.Slaves;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
 using MySql.Data.MySqlClient;
@@ -34,6 +35,101 @@ public class CharacterQuests(Character owner)
     private Character Owner { get; set; } = owner;
     public Dictionary<uint, Quest> ActiveQuests { get; } = [];
     private Dictionary<ushort, CompletedQuest> CompletedQuests { get; } = [];
+    private readonly List<(uint CinemaId, QuestComponentTemplate Component)> _cinemaEndEffects = [];
+
+    public void BindPlayingCinema(uint cinemaId)
+    {
+        if (cinemaId != 0)
+            Owner.CurrentlyPlayingCinemaId = cinemaId;
+    }
+
+    /// <summary>
+    /// Permission / talk may already be playing this cinema before Progress
+    /// initializes. Credit it now so complete + next accept happen during the film.
+    /// </summary>
+    public void BindAndCreditPlayingCinema(uint cinemaId)
+    {
+        if (!QuestCinemaBindRules.ShouldReplacePlaying(Owner.CurrentlyPlayingCinemaId, cinemaId))
+            return;
+
+        var alreadyPlaying = QuestCinemaBindRules.ShouldCreditOnEnterProgress(
+            Owner.CurrentlyPlayingCinemaId, cinemaId);
+        Owner.CurrentlyPlayingCinemaId = cinemaId;
+        if (alreadyPlaying)
+            Owner.Events.OnCinemaStarted(Owner, new OnCinemaStartedArgs { CinemaId = cinemaId });
+    }
+
+    public void EnqueueCinemaEndEffects(uint cinemaId, QuestComponentTemplate component)
+    {
+        if (cinemaId == 0 || component == null)
+            return;
+        _cinemaEndEffects.Add((cinemaId, component));
+        Logger.Info(
+            "Quest component buff deferred until cinema={0} component={1} buff={2}",
+            cinemaId,
+            component.Id,
+            component.BuffId);
+    }
+
+    public IReadOnlyList<uint> DeferredCinemaIds()
+    {
+        if (_cinemaEndEffects.Count == 0)
+            return [];
+        var ids = new uint[_cinemaEndEffects.Count];
+        for (var i = 0; i < _cinemaEndEffects.Count; i++)
+            ids[i] = _cinemaEndEffects[i].CinemaId;
+        return ids;
+    }
+
+    public uint ResolvePlayingCinemaId(uint reported) =>
+        QuestCinemaBindRules.ResolveCompletedCinema(reported, DeferredCinemaIds());
+
+    public void ApplyCinemaEndEffects(uint cinemaId)
+    {
+        if (_cinemaEndEffects.Count == 0)
+            return;
+        cinemaId = ResolvePlayingCinemaId(cinemaId);
+        if (cinemaId == 0)
+        {
+            Logger.Warn(
+                "Quest cinema-end skipped, playing id is 0 with {0} deferred buff(s)",
+                _cinemaEndEffects.Count);
+            return;
+        }
+
+        var applied = 0;
+        for (var i = 0; i < _cinemaEndEffects.Count;)
+        {
+            var pending = _cinemaEndEffects[i];
+            if (pending.CinemaId != cinemaId)
+            {
+                i++;
+                continue;
+            }
+            applied++;
+
+            _cinemaEndEffects.RemoveAt(i);
+            Logger.Info(
+                "Quest cinema-end component buff cinema={0} component={1} buff={2}",
+                cinemaId,
+                pending.Component.Id,
+                pending.Component.BuffId);
+
+            var questId = pending.Component.ParentQuestTemplate?.Id ?? 0;
+            if (questId != 0 && ActiveQuests.TryGetValue(questId, out var quest))
+                quest.UseSkillAndBuff(pending.Component);
+            else
+                QuestComponentEffectRules.ApplySkillAndBuff(Owner, pending.Component, SkillManager.Instance);
+        }
+
+        if (applied == 0)
+        {
+            Logger.Warn(
+                "Quest cinema-end had no buff for cinema={0}, deferred={1}",
+                cinemaId,
+                _cinemaEndEffects.Count);
+        }
+    }
 
     public bool HasQuest(uint questId)
     {
@@ -113,6 +209,11 @@ public class CharacterQuests(Character owner)
                 return false;
             }
         }
+
+        // /quest add does not pass an NPC. Start's AcceptNpc act then stays
+        // false, Progress never arms, and interactables refuse the quest.
+        if (forcibly)
+            QuestAcceptRules.FillUnknownAcceptor(template, ref questAcceptorType, ref acceptorId);
 
         // Create new Quest Object
         var quest = new Quest(template, Owner)
@@ -481,7 +582,22 @@ public class CharacterQuests(Character owner)
         }
     }
 
-    /// <summary>Sends active and completed quest lists at character select.</summary>
+    /// <summary>
+    /// Push one dirty completed-quest bitset block after a turn-in so the client's
+    /// unit_req kind-31 / IsCompleted readers see the finish without waiting for
+    /// the next full <see cref="SendCompleted"/> (login / SendInitialState).
+    /// </summary>
+    public void SendCompletedBlock(CompletedQuest block)
+    {
+        if (block == null)
+            return;
+        Owner.SendPacket(new SCCompletedQuestsPacket([block]));
+    }
+
+    /// <summary>
+    /// Sends active and completed lists. Char-select is not enough: in-world
+    /// start/complete checks read this after the local player exists.
+    /// </summary>
     public void SendInitialState()
     {
         Send();
@@ -1093,12 +1209,17 @@ public class CharacterQuests(Character owner)
                 {
                     if (!slave.Buffs.CheckBuff(buffId))
                     {
+                        var oldMaxHp = slave.MaxHp;
+                        var oldHp = slave.Hp;
                         slave.Buffs.AddBuff(buffId, Owner);
-                        Logger.Info("SphereBuff APPLY slave={0} buff={1} detail={2}", slave.Name, buffId, sphereBuffDetailId);
+                        slave.Hp = SlaveHealthCapRules.AfterMaxHpChanged(oldHp, oldMaxHp, slave.MaxHp);
+                        if (slave.Hp != oldHp)
+                        {
+                            slave.BroadcastPacket(new SCUnitPointsPacket(slave.ObjId, slave.Hp, slave.Mp), false);
+                            slave.ParentWorld?.SlaveManager?.UpdateSlaveRepairPoints(slave);
+                        }
 
-                        // Ezi (13816) raises MaxHp by 10%, so the hull now sits below its cap and
-                        // Moored's HealthRegen (+200/tick) repairs it back up — Slave.RegenTick pushes
-                        // the points as it climbs. Nothing to snap here.
+                        Logger.Info("SphereBuff APPLY slave={0} buff={1} detail={2}", slave.Name, buffId, sphereBuffDetailId);
                     }
                 }
                 else if (slave.Buffs.CheckBuff(buffId))

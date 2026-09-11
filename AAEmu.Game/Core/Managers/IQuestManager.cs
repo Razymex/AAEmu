@@ -16,6 +16,8 @@ public interface IQuestManager : ILoadable
     List<uint> GetGroupItems(uint groupId);
     QuestSupplies GetSupplies(byte level);
     QuestTemplate GetTemplate(uint id);
+    bool IsQuestTalkNpc(uint npcTemplateId);
+    IReadOnlyCollection<uint> GetQuestTalkDoodadIds();
     void EnqueueEvaluation(Quest quest);
     int RemoveQuestTimer(uint ownerId, uint questId);
 }

@@ -19,6 +19,7 @@ using AAEmu.Game.Models.Game.Housing;
 using AAEmu.Game.Models.Game.Items;
 using AAEmu.Game.Models.Game.Items.Actions;
 using AAEmu.Game.Models.Game.Items.Templates;
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.Game.Models.Game.Skills;
 using AAEmu.Game.Models.Game.Units;
 using AAEmu.Game.Models.Game.World;
@@ -1928,6 +1929,30 @@ public class DoodadManager(INonUnitObjectIdManager objectIdManager, IDoodadIdMan
                 }
             }
 
+            // doodad_func_quest_reacts
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT * FROM doodad_func_quest_reacts";
+                command.Prepare();
+                using (var reader = new SQLiteWrapperReader(command.ExecuteReader()))
+                {
+                    while (reader.Read())
+                    {
+                        var func = new DoodadFuncQuestReact
+                        {
+                            Id = reader.GetUInt32("id"),
+                            QuestId = reader.GetUInt32("quest_id", 0),
+                            QuestStatusId = reader.GetUInt32("quest_status_id", 0),
+                            NextPhase = reader.GetInt32("next_phase", -1),
+                            QuestComponentId = reader.GetUInt32("quest_component_id", 0),
+                            BubbleOnce = reader.GetBoolean("bubble_once", true),
+                            BubbleId = reader.GetUInt32("bubble_id", 0)
+                        };
+                        _phaseFuncTemplates["DoodadFuncQuestReact"].Add(func.Id, func);
+                    }
+                }
+            }
+
             // doodad_func_respawns
             using (var command = connection.CreateCommand())
             {
@@ -2298,6 +2323,7 @@ public class DoodadManager(INonUnitObjectIdManager objectIdManager, IDoodadIdMan
                         template.MaxTime = reader.GetInt32("max_time", 0);
                         template.ModelKindId = reader.GetUInt32("model_kind_id");
                         template.Model = reader.GetString("model", "") ?? "";
+                        template.ClientDoodad = reader.GetBoolean("client_doodad", true);
                         template.LoadModelFromWorld = reader.GetBoolean("load_model_from_world", false);
                         template.SystemDoodad = reader.GetBoolean("system_doodad", false);
                         template.UseCreatorFaction = reader.GetBoolean("use_creator_faction", true);
@@ -2758,6 +2784,52 @@ public class DoodadManager(INonUnitObjectIdManager objectIdManager, IDoodadIdMan
         }
 
         return funcs.GetValueOrDefault(funcId);
+    }
+
+    public void AddQuestFuncTemplateIds(ISet<uint> dest)
+    {
+        if (dest == null || _templates == null)
+            return;
+
+        foreach (var template in _templates.Values)
+        {
+            foreach (var group in template.FuncGroups)
+            {
+                foreach (var func in GetFuncsForGroup(group.Id))
+                {
+                    if (func.FuncType != nameof(DoodadFuncQuest))
+                        continue;
+                    dest.Add(template.Id);
+                    goto NextTemplate;
+                }
+            }
+
+            NextTemplate: ;
+        }
+    }
+
+    public void AddNpcTypeTemplateIds(ISet<uint> dest)
+    {
+        if (dest == null || _templates == null)
+            return;
+
+        foreach (var template in _templates.Values)
+        {
+            if (QuestTalkDoodadRules.TryParseNpcTypeModel(template.Model, out _))
+                dest.Add(template.Id);
+        }
+    }
+
+    public void AddClientDoodadTemplateIds(ISet<uint> dest)
+    {
+        if (dest == null || _templates == null)
+            return;
+
+        foreach (var template in _templates.Values)
+        {
+            if (template.ClientDoodad)
+                dest.Add(template.Id);
+        }
     }
 
     public bool OffersQuest(uint doodadTemplateId, uint questId)

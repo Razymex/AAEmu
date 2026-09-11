@@ -1,3 +1,4 @@
+using AAEmu.Game.Models.Game.Quests;
 using AAEmu.World.Core.Relay;
 
 namespace AAEmu.UnitTests.World.Core.Relay;
@@ -62,6 +63,128 @@ public class ZoneDoodadPlacementCatalogTests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task ParseFile_011_011Pad_ConvertsEhnoirAndFeosToWorld()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"doodad_3901_{Guid.NewGuid():N}.g");
+        await File.WriteAllTextAsync(path, """
+            doodad
+                category 17
+                type 14226
+                family 0
+                vegetation false
+                pos ( x 282.626, y 565.929, z 110.011 )
+                ori ( x 0, y 0, z 0.951057, w 0.309017 )
+                scale 1
+            doodad
+                category 17
+                type 14227
+                family 0
+                vegetation false
+                pos ( x 280.631, y 563.183, z 110.172 )
+                ori ( x 0, y 0, z -0.325568, w 0.945519 )
+                scale 1
+            doodad
+                category 17
+                type 14220
+                family 0
+                vegetation false
+                pos ( x 204.733, y 286.127, z 124.619 )
+                ori ( x 0, y 0, z 0.0174524, w 0.999848 )
+                scale 1
+            """);
+        try
+        {
+            var list = ZoneDoodadPlacementCatalog.ParseFile(path, cellX: 11, cellY: 11);
+            await Assert.That(list.Count).IsEqualTo(3);
+            await Assert.That(list[0].TemplateId).IsEqualTo(14226u);
+            await Assert.That(list[0].X).IsEqualTo(11546.626f).Within(0.001f);
+            await Assert.That(list[0].Y).IsEqualTo(11829.929f).Within(0.001f);
+            await Assert.That(list[1].TemplateId).IsEqualTo(14227u);
+            await Assert.That(list[1].X).IsEqualTo(11544.631f).Within(0.001f);
+            await Assert.That(list[1].Y).IsEqualTo(11827.183f).Within(0.001f);
+            await Assert.That(list[2].TemplateId).IsEqualTo(14220u);
+            await Assert.That(list[2].X).IsEqualTo(11468.733f).Within(0.001f);
+            await Assert.That(list[2].Y).IsEqualTo(11550.127f).Within(0.001f);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public async Task GetByTemplates_ThenPlanCompanions_TakesPadSkipsPlaza()
+    {
+        const string world = "companion_plan_test_world";
+        ZoneDoodadPlacementCatalog.SeedIndexForTests(world,
+        [
+            new(14226, 11546.626f, 11829.929f, 110.011f, 0f),
+            new(14227, 11544.631f, 11827.183f, 110.172f, 0f),
+            new(14228, 11538.821f, 11828.881f, 110.356f, 0f),
+            new(14178, 11468.733f, 11550.127f, 124.619f, 0f)
+        ]);
+        try
+        {
+            var talk = ToRules(ZoneDoodadPlacementCatalog.GetByTemplates(world, [14226u]));
+            var npcType = ToRules(
+                ZoneDoodadPlacementCatalog.GetByTemplates(world, [14226u, 14227u, 14228u, 14178u]));
+            var planned = QuestTalkDoodadRules.PlanCompanions([14226u], talk, npcType, []);
+
+            await Assert.That(planned.Any(p => p.TemplateId == 14227)).IsTrue();
+            await Assert.That(planned.Count(p => p.TemplateId == 14228)).IsEqualTo(1);
+            await Assert.That(planned.Any(p => p.TemplateId is 14226 or 14178)).IsFalse();
+        }
+        finally
+        {
+            ZoneDoodadPlacementCatalog.Invalidate(world);
+        }
+    }
+
+    private static List<QuestTalkDoodadRules.Placement> ToRules(
+        IReadOnlyList<ZoneDoodadPlacementCatalog.DoodadPlacement> catalog)
+    {
+        var list = new List<QuestTalkDoodadRules.Placement>(catalog.Count);
+        foreach (var p in catalog)
+            list.Add(new QuestTalkDoodadRules.Placement(p.TemplateId, p.X, p.Y, p.Z, p.YawDegrees));
+        return list;
+    }
+
+    [Test]
+    public async Task ParseIgnoreDoodadTypes_ReadsOpenAndIgnoreLists()
+    {
+        var ids = ZoneDoodadPlacementCatalog.ParseIgnoreDoodadTypes("""
+            ignore_spawners
+                doodadType 8411
+                doodadType 8412
+            """);
+        await Assert.That(ids.SetEquals([8411u, 8412u])).IsTrue();
+        await Assert.That(ZoneDoodadPlacementCatalog.IsIgnoreListFileName("doodad_open_03.g")).IsTrue();
+        await Assert.That(ZoneDoodadPlacementCatalog.IsIgnoreListFileName("ignore_doodad_spawners_01.g")).IsTrue();
+        await Assert.That(ZoneDoodadPlacementCatalog.IsIgnoreListFileName("doodad.g")).IsFalse();
+    }
+
+    [Test]
+    public async Task GetByTemplates_MarksIgnoredPermanentFromSeed()
+    {
+        const string world = "ignore_flag_test_world";
+        ZoneDoodadPlacementCatalog.SeedIndexForTests(world,
+        [
+            new(14226, 11546.626f, 11829.929f, 110.011f, 0f),
+            new(8411, 20113.5f, 21012.5f, 102.8f, 0f, IgnoredPermanent: true)
+        ]);
+        try
+        {
+            var list = ZoneDoodadPlacementCatalog.GetByTemplates(world, [14226u, 8411u]);
+            await Assert.That(list.Single(p => p.TemplateId == 14226).IgnoredPermanent).IsFalse();
+            await Assert.That(list.Single(p => p.TemplateId == 8411).IgnoredPermanent).IsTrue();
+        }
+        finally
+        {
+            ZoneDoodadPlacementCatalog.Invalidate(world);
         }
     }
 
