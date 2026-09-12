@@ -323,6 +323,18 @@ public class Buff
         StopEffectTask(replace, fireTimeout);
     }
 
+    /// <summary>
+    /// Ends this buff through its natural-timeout path: the Timeout triggers run and the buff is
+    /// removed, exactly as if its duration had elapsed. A seat ride uses this - the seat buff's Timeout
+    /// trigger is what carries the rider (skills.id 40228 '층간 이동' applies it, its trigger casts the
+    /// ride skill), and the ride happens when the rider leaves the seat, long before the buff's own
+    /// duration ends. Ordinary early removals must not use it - see <see cref="StopEffectTask"/>.
+    /// </summary>
+    public void TimeOut()
+    {
+        StopEffectTask(replace: false, fireTimeout: true);
+    }
+
     private void StopEffectTask(bool replace, bool fireTimeout)
     {
         lock (_lock)

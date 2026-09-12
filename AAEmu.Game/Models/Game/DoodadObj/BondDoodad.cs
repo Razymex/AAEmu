@@ -41,6 +41,12 @@ public class BondDoodad : PacketMarshaler
         _spot = spot;
     }
 
+    public uint SourceSkillId
+    {
+        get;
+        set;
+    }
+
     public void SetOwner(Doodad owner)
     {
         _owner = owner;
@@ -89,6 +95,13 @@ public class BondDoodad : PacketMarshaler
 
         character.BroadcastPacket(new SCUnbondDoodadPacket(character.ObjId, character.Id, doodadObjId), true);
         WorldIntegration.RelayBondDoodadToZone?.Invoke(character.ObjId, bonding, false);
+
+        // A seat can be a ride: the seat buff's Timeout trigger is what carries the rider (skills.id
+        // 40228 '층간 이동' applies it; its trigger casts the ride skill, which moves the rider a floor
+        // up), and leaving the seat is that moment — the rider never waits out the buff. Time out the
+        // buffs this seat skill applied so the trigger runs; other buff removals keep the natural-expiry
+        // rule, so this is scoped to the seat's own skill.
+        character.Buffs.TimeoutBuffsFromSkill(bonding.SourceSkillId);
         character.Buffs.TriggerRemoveOn(BuffRemoveOn.Unbond);
         return true;
     }
