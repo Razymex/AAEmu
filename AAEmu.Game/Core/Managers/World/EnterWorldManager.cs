@@ -292,6 +292,8 @@ public class EnterWorldManager(
 
             // Remove from Team (raid/party)
             teamManager.MemberRemoveFromTeam(activeChar, activeChar, RiskyAction.Leave);
+            if (TeamJointManager.TryGet(out var teamJoints))
+                teamJoints.OnCharacterLogout(activeChar.Id);
 
             // Remove from all Chat
             chatManager.LeaveAllChannels(activeChar);
