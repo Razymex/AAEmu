@@ -1,4 +1,5 @@
 ﻿using AAEmu.Game.GameData;
+using AAEmu.Game.Models.Game.Faction;
 
 namespace AAEmu.UnitTests.Game.GameData;
 
@@ -185,6 +186,99 @@ public sealed class FactionScoringGameDataTests : SqliteTestBase
 
         await Assert.That(() => FactionScoringGameData.Instance.Load(Connection))
             .Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    public async Task NpcContributionUsesCatalogPointAndDeduplicatesLinkRows()
+    {
+        FactionScoringGameData.Instance.Load(Connection);
+
+        var contributions = FactionCompetitionScoringRules.ResolveNpcKillContributions(
+            FactionScoringGameData.Instance, 100);
+        await Assert.That(contributions.Count).IsEqualTo(1);
+        await Assert.That(contributions[0].CompetitionId).IsEqualTo(10u);
+        await Assert.That(contributions[0].Kind).IsEqualTo(FactionCompetitionContributionKind.NpcKill);
+
+        var update = FactionCompetitionScoringRules.Apply(
+            FactionScoringGameData.Instance, contributions[0], 4);
+        await Assert.That(update.AppliedDelta).IsEqualTo(2);
+        await Assert.That(update.PreviousScore).IsEqualTo(4);
+        await Assert.That(update.Score).IsEqualTo(6);
+        await Assert.That(update.RequiredPointsReached).IsFalse();
+    }
+
+    [Test]
+    public async Task QuestContributionUsesCatalogPointAndRequiredThreshold()
+    {
+        FactionScoringGameData.Instance.Load(Connection);
+
+        var contributions = FactionCompetitionScoringRules.ResolveQuestCompleteContributions(
+            FactionScoringGameData.Instance, 200);
+        await Assert.That(contributions.Count).IsEqualTo(1);
+
+        var update = FactionCompetitionScoringRules.Apply(
+            FactionScoringGameData.Instance, contributions[0], 98);
+        await Assert.That(update.AppliedDelta).IsEqualTo(3);
+        await Assert.That(update.Score).IsEqualTo(101);
+        await Assert.That(update.RequiredPointsReached).IsTrue();
+    }
+
+    [Test]
+    public async Task PlayerKillPointIsExplicitAndCatalogBacked()
+    {
+        FactionScoringGameData.Instance.Load(Connection);
+
+        await Assert.That(FactionCompetitionScoringRules.GetPointDelta(
+                FactionScoringGameData.Instance, 10, FactionCompetitionContributionKind.PlayerKill))
+            .IsEqualTo(1);
+        await Assert.That(FactionCompetitionScoringRules.GetPointDelta(
+                FactionScoringGameData.Instance, 10, FactionCompetitionContributionKind.NpcKill))
+            .IsEqualTo(2);
+        await Assert.That(FactionCompetitionScoringRules.GetPointDelta(
+                FactionScoringGameData.Instance, 10, FactionCompetitionContributionKind.QuestComplete))
+            .IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task ZoneScoreLevelResolutionUsesCatalogThresholds()
+    {
+        FactionScoringGameData.Instance.Load(Connection);
+
+        var before = ZoneScoreLevelRules.Resolve(FactionScoringGameData.Instance, 1, 49);
+        var after = ZoneScoreLevelRules.Resolve(FactionScoringGameData.Instance, 1, 50);
+        await Assert.That(before.Level).IsEqualTo(0);
+        await Assert.That(after.Level).IsEqualTo(1);
+        await Assert.That(after.Definition.RequiredScore).IsEqualTo(50L);
+
+        var transition = ZoneScoreLevelRules.ApplyDelta(FactionScoringGameData.Instance, 1, 49, 1);
+        await Assert.That(transition.PreviousLevel).IsEqualTo(0);
+        await Assert.That(transition.CurrentLevel).IsEqualTo(1);
+        await Assert.That(transition.Changed).IsTrue();
+        await Assert.That(transition.AppliedDelta).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ZoneScoreNegativeDeltaReturnsToCatalogBaseline()
+    {
+        FactionScoringGameData.Instance.Load(Connection);
+
+        var transition = ZoneScoreLevelRules.ApplyDelta(FactionScoringGameData.Instance, 1, 50, -1);
+        await Assert.That(transition.CurrentLevel).IsEqualTo(0);
+        await Assert.That(transition.Changed).IsTrue();
+    }
+
+    [Test]
+    public async Task UnknownScoringIdentifiersFailLoudly()
+    {
+        FactionScoringGameData.Instance.Load(Connection);
+
+        await Assert.That(() => FactionCompetitionScoringRules.Apply(
+                FactionScoringGameData.Instance,
+                new FactionCompetitionContribution(999, FactionCompetitionContributionKind.NpcKill, 100),
+                0))
+            .Throws<KeyNotFoundException>();
+        await Assert.That(() => ZoneScoreLevelRules.Resolve(FactionScoringGameData.Instance, 999, 0))
+            .Throws<KeyNotFoundException>();
     }
 
     private void Execute(string sql)
