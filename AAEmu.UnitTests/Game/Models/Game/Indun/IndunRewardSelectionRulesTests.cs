@@ -71,6 +71,45 @@ public class IndunRewardSelectionRulesTests
     }
 
     [Test]
+    public async Task SelectBonusCounts_KeepsOnlySelectedRewardsInTypedOrder()
+    {
+        var selected = new[] { Reward(2, 6, 1, 2), Reward(1, 6, 1, 2) };
+        var bonuses = new[]
+        {
+            new InstanceRewardBonusCount(3, 1, 200, 2),
+            new InstanceRewardBonusCount(1, 2, 100, 1),
+            new InstanceRewardBonusCount(2, 1, 100, 1)
+        };
+
+        var result = IndunRewardSelectionRules.SelectBonusCounts(selected, bonuses);
+
+        await Assert.That(result.Count).IsEqualTo(3);
+        await Assert.That(result[0].InstanceRewardId).IsEqualTo(1u);
+        await Assert.That(result[0].BuffId).IsEqualTo(100u);
+        await Assert.That(result[1].BuffId).IsEqualTo(200u);
+        await Assert.That(result[2].InstanceRewardId).IsEqualTo(2u);
+    }
+
+    [Test]
+    public async Task SelectBonusCounts_RejectsOrphanDuplicateAndNonPositiveRows()
+    {
+        var selected = new[] { Reward(1, 6, 1, 2) };
+
+        await Assert.That(() => IndunRewardSelectionRules.SelectBonusCounts(selected,
+                [new InstanceRewardBonusCount(1, 2, 100, 1)]))
+            .Throws<InvalidDataException>();
+        await Assert.That(() => IndunRewardSelectionRules.SelectBonusCounts(selected,
+                [
+                    new InstanceRewardBonusCount(1, 1, 100, 1),
+                    new InstanceRewardBonusCount(2, 1, 100, 2)
+                ]))
+            .Throws<InvalidDataException>();
+        await Assert.That(() => IndunRewardSelectionRules.SelectBonusCounts(selected,
+                [new InstanceRewardBonusCount(1, 1, 100, 0)]))
+            .Throws<InvalidDataException>();
+    }
+
+    [Test]
     public async Task MailKind_MapsByTypedCatalogNameAndFailsLoudlyOtherwise()
     {
         await Assert.That(IndunRewardMailKindRules.Map(InstanceRewardMailKind.Basic))
