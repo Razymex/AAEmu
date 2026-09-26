@@ -26,8 +26,13 @@ public class IndunRewardSelectionRulesTests
         await Assert.That(IndunRewardSelectionRules.TryResolveAuthoredDifficultySelection(rewards, false, 2, 6, out _)).IsFalse();
     }
 
+    /// <summary>
+    /// The difficulty path cannot resolve a value when the instance publishes no difficulty info. This
+    /// is a property of the difficulty source only — it is not a claim that a rank-backed kind is
+    /// unauthored. Rank bands are authored; see <c>InstanceRewardTaxonomyRulesTests</c>.
+    /// </summary>
     [Test]
-    public async Task SoldierRankWithoutDifficultyEvidence_IsExplicitlyRejected()
+    public async Task DifficultySource_RejectsAnInstanceThatPublishesNoDifficultyInfo()
     {
         await Assert.That(IndunRewardSelectionRules.TryResolveDifficultySelection(false, 1, out _)).IsFalse();
         await Assert.That(IndunRewardSelectionRules.TryResolveDifficultySelection(false, 4, out _)).IsFalse();
