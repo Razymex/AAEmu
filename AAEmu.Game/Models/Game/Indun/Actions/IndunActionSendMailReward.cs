@@ -7,7 +7,8 @@ namespace AAEmu.Game.Models.Game.Indun.Actions;
 /// <summary>
 /// W03A delivery hook for <c>indun_action_send_mail_rewards</c>. The current shipped selection
 /// evidence is <c>instance_difficult_infos</c>; a kind whose selection source is not loaded fails
-/// loudly instead of guessing a soldier-rank value. W03B bonus counts are intentionally excluded.
+/// loudly instead of guessing a soldier-rank value. Typed bonus counts join only after this same
+/// selection succeeds.
 /// </summary>
 internal class IndunActionSendMailReward : IndunAction
 {

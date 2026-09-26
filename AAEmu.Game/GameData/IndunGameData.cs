@@ -24,8 +24,11 @@ public class IndunGameData : Singleton<IndunGameData>, IGameDataLoader
     private Dictionary<uint, List<IndunRound>> _indunRounds;
     private Dictionary<uint, HashSet<byte>> _difficultiesByZoneGroup;
     private Dictionary<uint, List<InstanceReward>> _instanceRewards;
+    private Dictionary<uint, List<InstanceRewardBonusCount>> _instanceRewardBonusCounts;
     private Dictionary<uint, InstanceRewardMailText> _instanceRewardMailTexts;
     private HashSet<uint> _instanceRewardIds;
+    private HashSet<uint> _instanceRewardBonusCountIds;
+    private HashSet<(uint InstanceRewardId, uint BuffId)> _instanceRewardBonusCountKeys;
     private HashSet<uint> _instanceRewardMailTextIds;
     private HashSet<uint> _instanceIdsWithDifficultyInfo;
     private Dictionary<uint, InstanceRewardKindDefinition> _instanceRewardKinds;
@@ -95,6 +98,27 @@ public class IndunGameData : Singleton<IndunGameData>, IGameDataLoader
 
         return IndunRewardSelectionRules.Select(rewards, instanceRewardKindId, selectionValue);
     }
+
+    /// <summary>
+    /// Bonus rows attached to one authored reward. Only rows that joined both
+    /// <c>instance_rewards</c> and <c>buffs</c> are returned; orphan rows are reported by
+    /// <see cref="InstanceRewardBonusDiagnostics"/> and never guessed onto another reward.
+    /// </summary>
+    public IReadOnlyList<InstanceRewardBonusCount> GetInstanceRewardBonusCounts(uint instanceRewardId)
+    {
+        if (instanceRewardId == 0)
+            throw new InvalidDataException("instance_reward_bonus_counts has no zero reward id");
+        if (_instanceRewardIds != null && !_instanceRewardIds.Contains(instanceRewardId))
+            throw new InvalidDataException($"instance_rewards has no reward {instanceRewardId}");
+        if (_instanceRewardBonusCounts != null &&
+            _instanceRewardBonusCounts.TryGetValue(instanceRewardId, out var bonusCounts))
+            return bonusCounts;
+        return [];
+    }
+
+    /// <summary>Rows rejected during content load because their reward id is not shipped.</summary>
+    public InstanceRewardBonusDiagnostics InstanceRewardBonusDiagnostics { get; private set; } =
+        new([], []);
 
     /// <summary>The mail copy is keyed by the instance catalog id, not the transient world id.</summary>
     public InstanceRewardMailText GetInstanceRewardMailText(uint instanceId)
@@ -186,8 +210,11 @@ public class IndunGameData : Singleton<IndunGameData>, IGameDataLoader
         _indunRounds = [];
         _difficultiesByZoneGroup = [];
         _instanceRewards = [];
+        _instanceRewardBonusCounts = [];
         _instanceRewardMailTexts = [];
         _instanceRewardIds = [];
+        _instanceRewardBonusCountIds = [];
+        _instanceRewardBonusCountKeys = [];
         _instanceRewardMailTextIds = [];
         _instanceIdsWithDifficultyInfo = [];
         _instanceRewardKinds = [];
@@ -996,6 +1023,65 @@ public class IndunGameData : Singleton<IndunGameData>, IGameDataLoader
             }
         }
 
+        var orphanBonusRowIds = new List<uint>();
+        var orphanBonusRewardIds = new SortedSet<uint>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"SELECT bc.id, bc.instance_reward_id, bc.buff_id, bc.count,
+                                           r.id AS reward_catalog_id, b.name AS buff_name
+                                    FROM instance_reward_bonus_counts bc
+                                    LEFT JOIN instance_rewards r ON r.id = bc.instance_reward_id
+                                    LEFT JOIN buffs b ON b.id = bc.buff_id
+                                    ORDER BY bc.instance_reward_id, bc.buff_id, bc.id";
+            command.Prepare();
+            using var sqliteReader = command.ExecuteReader();
+            using var reader = new SQLiteWrapperReader(sqliteReader);
+            while (reader.Read())
+            {
+                var bonusId = reader.GetUInt32("id");
+                var rewardId = reader.GetUInt32("instance_reward_id");
+                var buffId = reader.GetUInt32("buff_id");
+                var count = reader.GetInt32("count");
+                if (bonusId == 0 || rewardId == 0 || buffId == 0)
+                    throw new InvalidDataException($"instance_reward_bonus_counts {bonusId} has a zero catalog id");
+                if (count <= 0)
+                    throw new InvalidDataException($"instance_reward_bonus_counts {bonusId} has a non-positive count");
+                if (!_instanceRewardBonusCountIds.Add(bonusId))
+                    throw new InvalidDataException($"instance_reward_bonus_counts has duplicate id {bonusId}");
+                if (reader.IsDBNull("buff_name") || string.IsNullOrWhiteSpace(reader.GetString("buff_name")))
+                    throw new InvalidDataException($"instance_reward_bonus_counts {bonusId} has no buffs row for buff {buffId}");
+
+                if (reader.IsDBNull("reward_catalog_id"))
+                {
+                    orphanBonusRowIds.Add(bonusId);
+                    orphanBonusRewardIds.Add(rewardId);
+                    continue;
+                }
+
+                if (!_instanceRewardBonusCountKeys.Add((rewardId, buffId)))
+                    throw new InvalidDataException(
+                        $"instance_reward_bonus_counts has duplicate reward {rewardId} / buff {buffId}");
+
+                if (!_instanceRewardBonusCounts.TryGetValue(rewardId, out var bonusCounts))
+                {
+                    bonusCounts = [];
+                    _instanceRewardBonusCounts.Add(rewardId, bonusCounts);
+                }
+                bonusCounts.Add(new InstanceRewardBonusCount(bonusId, rewardId, buffId, count));
+            }
+        }
+
+        orphanBonusRowIds.Sort();
+        InstanceRewardBonusDiagnostics = new(orphanBonusRewardIds.ToArray(), orphanBonusRowIds.ToArray());
+        if (orphanBonusRowIds.Count > 0)
+        {
+            Logger.Error(
+                "instance_reward_bonus_counts rejected {0} orphan row(s) for absent reward id(s) {1}; row id(s): {2}",
+                orphanBonusRowIds.Count,
+                string.Join(", ", orphanBonusRewardIds),
+                string.Join(", ", orphanBonusRowIds));
+        }
+
         using (var command = connection.CreateCommand())
         {
             command.CommandText = @"SELECT m.id, m.instance_id, m.mail_sender, m.mail_title, m.mail_body, m.mail_kind_id,
@@ -1055,7 +1141,8 @@ public class IndunGameData : Singleton<IndunGameData>, IGameDataLoader
         foreach (var rounds in _indunRounds.Values)
             roundCount += rounds.Count;
         var instanceRewardCount = _instanceRewards.Values.Sum(rewards => rewards.Count);
-        Logger.Info($"Loaded {_indunActions.Count} indun actions, {eventCount} indun events, {roundCount} indun rounds, {instanceRewardCount} instance rewards, {_instanceRewardMailTexts.Count} instance reward mail texts");
+        var instanceRewardBonusCount = _instanceRewardBonusCounts.Values.Sum(bonusCounts => bonusCounts.Count);
+        Logger.Info($"Loaded {_indunActions.Count} indun actions, {eventCount} indun events, {roundCount} indun rounds, {instanceRewardCount} instance rewards, {instanceRewardBonusCount} instance reward bonus counts, {_instanceRewardMailTexts.Count} instance reward mail texts");
     }
 
     public void PostLoad()
