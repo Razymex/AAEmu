@@ -21,14 +21,42 @@ public class TeamJointFlowTests
         public void Advance(TimeSpan by) => Now += by;
     }
 
-    private static (TeamJointManager Manager, FakeTeamJointContext World, Clock Time) Build()
+    /// <summary>
+    /// Stands in for compact. The real reader needs a container, and these tests are about the
+    /// flow, not the catalog. Values are shaped like the shipped rows so a test cannot quietly rely
+    /// on a zero standing in for real content.
+    /// </summary>
+    private sealed class FakeSummonContent : ITeamSummonContent
+    {
+        public bool Available { get; set; } = true;
+        public int ResolveCount { get; private set; }
+
+        public bool TryResolve(out TeamJointSummonContent.SummonTemplate template, out string reason)
+        {
+            ResolveCount++;
+            if (!Available)
+            {
+                template = null;
+                reason = "const_item_types 'team_summon' is missing";
+                return false;
+            }
+
+            template = new TeamJointSummonContent.SummonTemplate(
+                46130u, 39700u, 39701u, 23368u, 1000, 3000, 60000, 4);
+            reason = null;
+            return true;
+        }
+    }
+
+    private static (TeamJointManager Manager, FakeTeamJointContext World, Clock Time) Build(
+        FakeSummonContent content = null)
     {
         var clock = new Clock(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var world = new FakeTeamJointContext { LocalWorldId = 1 };
         world.AddCharacter(Alice, "Alice").AddCharacter(Bob, "Bob").AddCharacter(Carol, "Carol");
         world.AddTeam(TeamA, Alice, false, Alice, Carol);
         world.AddTeam(TeamB, Bob, false, Bob);
-        return (new TeamJointManager(world, clock), world, clock);
+        return (new TeamJointManager(world, clock, content ?? new FakeSummonContent()), world, clock);
     }
 
     private static void DriveToResponsePrompt(TeamJointManager manager, bool myTeamLeader)
@@ -79,6 +107,18 @@ public class TeamJointFlowTests
         await Assert.That(world.CountPackets<SCTeamJointInfoPacket>()).IsEqualTo(0);
         await Assert.That(manager.PendingJointCount).IsEqualTo(0);
         await Assert.That(world.Errors.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task Request_ModeThreeIsAcceptedAsARequestOrigin()
+    {
+        var (manager, world, _) = Build();
+        manager.RequestJointInfo(Alice, JointType, TeamJointModes.ContextRequest, "Bob", 1);
+
+        await Assert.That(manager.PendingJointCount).IsEqualTo(1);
+        await Assert.That(world.Errors.Count).IsEqualTo(0);
+        await Assert.That(world.Dialogs.Count(d => d.CharacterId == Alice && d.TaskId == TeamJointDialogTasks.RequestRaidJoint))
+            .IsEqualTo(1);
     }
 
     [Test]
@@ -321,7 +361,29 @@ public class TeamJointFlowTests
 
         manager.RequestJointInfo(Alice, JointType, TeamJointModes.MenuChatRequest, "Bob", 1);
         await Assert.That(manager.PendingJointCount).IsEqualTo(0);
-        await Assert.That(world.Errors.Single().Error).IsEqualTo(ErrorMessageType.TeamInviteeInTeam);
+        // Alice's own raid is the one already federated, so she is told she is already jointed
+        // rather than being given the generic "invitee is busy".
+        await Assert.That(world.Errors.Single().Error).IsEqualTo(ErrorMessageType.AlreadyRaidJointed);
+    }
+
+    [Test]
+    public async Task TargetAlreadyJointed_RequestIsRefusedWithItsOwnMessage()
+    {
+        var (manager, world, _) = Build();
+        DriveToResponsePrompt(manager, myTeamLeader: true);
+        manager.RespondToJoint(Bob, JointType, myTeamLeader: true, accept: true, timeout: false);
+        world.Errors.Clear();
+
+        // Bob's raid is the one already federated, so the request naming him is told the target is
+        // the problem. Alice's raid is jointed too, so use a third raid to keep the direction clean.
+        var dave = 4u;
+        var teamC = 300u;
+        world.AddCharacter(dave, "Dave");
+        world.AddTeam(teamC, dave, false, dave);
+        manager.RequestJointInfo(dave, JointType, TeamJointModes.MenuChatRequest, "Bob", 1);
+
+        await Assert.That(manager.PendingJointCount).IsEqualTo(0);
+        await Assert.That(world.Errors.Single().Error).IsEqualTo(ErrorMessageType.TargetAlreadyRaidJointed);
     }
 
     // ---------- break ----------

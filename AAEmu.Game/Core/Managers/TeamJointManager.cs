@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Globalization;
 
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Packets.G2C;
@@ -17,11 +18,22 @@ namespace AAEmu.Game.Core.Managers;
 /// All world access goes through <see cref="ITeamJointContext"/>, so every flow below is
 /// deterministic and testable without a running World.
 /// </summary>
-public sealed class TeamJointManager(ITeamJointContext context, TimeProvider timeProvider = null)
+public sealed class TeamJointManager(ITeamJointContext context, TimeProvider timeProvider = null,
+    ITeamSummonContent summonContent = null)
     : Singleton<TeamJointManager>
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private static readonly TimeSpan RequestLifetime = TimeSpan.FromMinutes(1);
+
+    private readonly ITeamSummonContent _summonContent = summonContent ?? new CompactTeamSummonContent();
+
+    /// <summary>
+    /// How long a pending break ask survives. The client's joint-dismiss frame counts this down
+    /// itself, so a server that never expired the ask would keep a dissolution the client has
+    /// already abandoned. The value is the client's own frame duration, not a shipped gameplay
+    /// rate, so it is a client-UI protocol constant rather than a value read from compact.
+    /// </summary>
+    private static readonly TimeSpan BreakAskLifetime = TimeSpan.FromMilliseconds(120_000);
 
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly ITeamJointContext _context = context;
@@ -99,14 +111,19 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
 
         if (_sessions.Values.Any(session => session.Contains(sourceTeam.Id) || session.Contains(targetTeam.Id)))
         {
-            _context.SendError(requesterId, ErrorMessageType.TeamInviteeInTeam);
+            // Asker's own state first: a raid already inside a federation cannot ask at all. Only
+            // when it is free is the target's state the reason.
+            var requesterJointed = _sessions.Values.Any(session => session.Contains(sourceTeam.Id));
+            _context.SendError(requesterId, requesterJointed
+                ? ErrorMessageType.AlreadyRaidJointed
+                : ErrorMessageType.TargetAlreadyRaidJointed);
             return;
         }
 
         if (_pendingJoints.Values.Any(pending =>
                 pending.SourceTeamId == sourceTeam.Id || pending.TargetTeamId == targetTeam.Id))
         {
-            _context.SendError(requesterId, ErrorMessageType.TeamLoading);
+            _context.SendError(requesterId, ErrorMessageType.RaidJointFailedStatusChanged);
             return;
         }
 
@@ -131,6 +148,12 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
             type,
             _timeProvider.GetUtcNow() + RequestLifetime);
 
+        // Two things reach the requester. The dialog task is what actually opens the joint frame
+        // (DLG_TASK_REQUEST_RAID_JOINT); the info packet carries the roster that frame then shows.
+        // The mode is ContextRequest, not ResponsePrompt: mode 3 is the value the client treats as
+        // the joint REQUEST frame, and this packet is the server's half of that same value.
+        _context.SendDialogTask(requesterId, TeamJointDialogTasks.RequestRaidJoint,
+            targetOwner.Name, targetTeam.MemberCount.ToString(CultureInfo.InvariantCulture));
         _context.Send(requesterId, new SCTeamJointInfoPacket(TeamJointModes.ContextRequest, new TeamJointInfo(
             unchecked((long)type),
             targetOwner.Name,
@@ -158,14 +181,24 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
 
         if (pending.Type != type)
         {
+            // The raid changed shape between asking and answering, so the answer can no longer be
+            // applied to what was asked.
             _pendingJoints.TryRemove(pending.SourceTeamId, out _);
-            _context.SendError(responderId, ErrorMessageType.TeamLoading);
+            _context.SendError(responderId, ErrorMessageType.RaidJointFailedStatusChanged);
             return;
         }
 
         var isSource = pending.SourceTeamId == team.Id;
         var otherTeam = _context.FindTeam(isSource ? pending.TargetTeamId : pending.SourceTeamId);
-        if (otherTeam == null || !team.CanManage(responderId))
+        if (otherTeam == null)
+        {
+            // The other raid is gone, so the federation it was asked about no longer exists.
+            _pendingJoints.TryRemove(pending.SourceTeamId, out _);
+            _context.SendError(responderId, ErrorMessageType.RaidJointErrorDismissed);
+            return;
+        }
+
+        if (!team.CanManage(responderId))
         {
             _context.SendError(responderId, ErrorMessageType.TeamNoRights);
             return;
@@ -191,6 +224,8 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
                 return;
             }
 
+            _context.SendDialogTask(targetOwner.Id, TeamJointDialogTasks.ResponseRaidJoint,
+                sourceOwner.Name, team.MemberCount.ToString(CultureInfo.InvariantCulture));
             _context.Send(targetOwner.Id, new SCTeamJointInfoPacket(TeamJointModes.ResponsePrompt,
                 new TeamJointInfo(
                     unchecked((long)type),
@@ -223,6 +258,7 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
 
     public void RespondToJointBreak(uint responderId, bool ask, bool accept)
     {
+        PurgeExpired();
         var team = _context.FindTeamByMember(responderId);
         if (team == null)
             return;
@@ -238,7 +274,8 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
                 return;
             }
 
-            if (!_pendingBreaks.TryAdd(session.JointId, new PendingBreak(team.Id, responderId)))
+            if (!_pendingBreaks.TryAdd(session.JointId,
+                    new PendingBreak(team.Id, responderId, _timeProvider.GetUtcNow() + BreakAskLifetime)))
                 return;
             var otherOwner = OnlineTeamOwner(_context.FindTeam(session.GetOtherTeamId(team.Id)));
             if (otherOwner != null)
@@ -294,6 +331,9 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
                 summonerId,
                 summoner.Name,
                 _timeProvider.GetUtcNow() + RequestLifetime);
+            // The dialog is the frame; the suggest packet carries where the summoner is standing so
+            // the frame can offer a map lookup before the member agrees to be moved.
+            _context.SendDialogTask(target.Id, TeamJointDialogTasks.TeamSummonSuggest, summoner.Name, string.Empty);
             _context.Send(target.Id, new SCTeamSummonSuggestPacket(
                 summoner.Name,
                 team.Id,
@@ -325,10 +365,92 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
 
         var summoner = _context.FindCharacterById(pending.SummonerId);
         var recipient = _context.FindCharacterById(recipientId);
-        if (summoner is not { IsOnline: true } || recipient is not { IsOnline: true } || recipient.IsInBattle)
+        if (summoner is not { IsOnline: true } || recipient is not { IsOnline: true })
             return false;
 
-        _context.Send(recipientId, new SCTeamSummonPacket());
+        if (!acceptedMove(recipient, summoner))
+            return false;
+
+        return MoveToSummoner(recipient, summoner, pending);
+    }
+
+    /// <summary>
+    /// The summon <em>moves</em> the member: the shipped question asks whether they will "move", and
+    /// the cancellation error says the summon was cancelled so you "cannot move". Nothing about the
+    /// frame is a consent-only handshake.
+    /// </summary>
+    private bool acceptedMove(TeamJointCharacterSnapshot recipient, TeamJointCharacterSnapshot summoner)
+    {
+        // The shipped caution list, enforced before anything is spent. The client drops the reply in
+        // combat without telling the server, so this is the same rule it shows.
+        if (TeamSummonRefusalRules.Refuses(recipient.BlockedStates))
+        {
+            var active = TeamSummonRefusalRules.ActiveNames(recipient.BlockedStates);
+            Logger.Warn("Summon of {0} by {1} refused: {2}.", recipient.Name, summoner.Name, string.Join(", ", active));
+            _context.SendError(recipient.Id, ErrorMessageType.SummonFail);
+            return false;
+        }
+
+        if (!_context.HasSummonLandingSpace(recipient.Id))
+        {
+            _context.SendError(recipient.Id, ErrorMessageType.SummonNotEnoughSpace);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Checks, moves, and only then spends. Every refusal happens before the flame is touched, so a
+    /// refused summon never costs the leader an item: the cooldown is checked, then the summoner is
+    /// asked whether a flame is carried at all, then the member is moved, and the flame is taken
+    /// last because its own description says it is consumed once the summon succeeds.
+    /// </summary>
+    private bool MoveToSummoner(
+        TeamJointCharacterSnapshot recipient,
+        TeamJointCharacterSnapshot summoner,
+        PendingSummon pending)
+    {
+        if (!_summonContent.TryResolve(out var summon, out var reason))
+        {
+            Logger.Error("Raid-team summon content is unusable: {0}. The member is not moved.", reason);
+            return false;
+        }
+
+        if (_context.IsOnSummonCooldown(summoner.Id, summon.SkillId))
+        {
+            Logger.Warn("Summoner {0} is still on the team_summon cooldown; the member is not moved.", summoner.Name);
+            _context.SendError(summoner.Id, ErrorMessageType.SummonFail);
+            return false;
+        }
+
+        // Ask whether a flame is carried before moving anyone, so a summoner without one never
+        // displaces a member for nothing.
+        if (!_context.HasSummonFlame(summoner.Id, summon.ItemId))
+        {
+            Logger.Warn("Summoner {0} has no team_summon flame; the member is not moved.", summoner.Name);
+            _context.SendError(summoner.Id, ErrorMessageType.SummonFail);
+            return false;
+        }
+
+        var destination = new TeamSummonDestination(summoner.ZoneId, summoner.X, summoner.Y, summoner.Z);
+        if (!_context.TryTeleport(recipient.Id, destination))
+        {
+            Logger.Warn("World refused to move {0} to {1}; the summon is reported as failed.", recipient.Name, summoner.Name);
+            _context.SendError(recipient.Id, ErrorMessageType.SummonFail);
+            return false;
+        }
+
+        // Last, because the move is what the flame pays for. A summoner who spends the last of it
+        // between the check above and here loses it to a successful summon, which is the intended
+        // race: the alternative is refunding an item the client has already been told was used.
+        if (!_context.TryConsumeSummonFlame(summoner.Id, summon.ItemId))
+        {
+            Logger.Error("Summoner {0} lost the team_summon flame mid-summon; the member was moved anyway.",
+                summoner.Name);
+        }
+
+        _context.Send(recipient.Id, new SCTeamSummonPacket());
         return true;
     }
 
@@ -460,6 +582,9 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
         {
             var order = checked((int)roster.GetOrder(entry.TeamId));
             _context.ApplyJoint(entry.TeamId, roster.JointId, entry.IsLeader, order);
+            // The shipped jointed notice promises the loot acquisition method and the dice bid go
+            // back to their defaults.
+            _context.ResetLootRules(entry.TeamId);
             foreach (var memberId in OnlineMemberIdsOf(entry.TeamId))
             {
                 _context.SendTeamHeader(entry.TeamId, memberId);
@@ -482,6 +607,8 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
         foreach (var entry in session.Roster.Entries)
         {
             _context.ClearJoint(entry.TeamId);
+            // The shipped dissolved notice promises the same reset on the way apart.
+            _context.ResetLootRules(entry.TeamId);
             if (entry.TeamId == skipTeamId)
                 continue;
             foreach (var memberId in OnlineMemberIdsOf(entry.TeamId))
@@ -515,6 +642,8 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
             _pendingJoints.TryRemove(entry.Key, out _);
         foreach (var entry in _pendingSummons.Where(entry => entry.Value.ExpiresAt <= now))
             _pendingSummons.TryRemove(entry.Key, out _);
+        foreach (var entry in _pendingBreaks.Where(entry => entry.Value.ExpiresAt <= now))
+            _pendingBreaks.TryRemove(entry.Key, out _);
     }
 
     private TeamJointCharacterSnapshot? OnlineTeamOwner(TeamJointTeamSnapshot? team)
@@ -543,7 +672,7 @@ public sealed class TeamJointManager(ITeamJointContext context, TimeProvider tim
         DateTimeOffset ExpiresAt,
         bool LeaderChoice = false);
 
-    private sealed record PendingBreak(uint RequesterTeamId, uint RequesterCharacterId);
+    private sealed record PendingBreak(uint RequesterTeamId, uint RequesterCharacterId, DateTimeOffset ExpiresAt);
 
     private sealed record PendingSummon(
         uint RecipientId,

@@ -836,4 +836,15 @@ public enum ErrorMessageType : short
     SurveyFormAlreadyDone = 1225,                                   // "survey_form_already_done";
     SurveyFormInvalidPeriod = 1226,                                 // "survey_form_invalid_period";
     SurveyFormInvalidCommon = 1227,                                 // "survey_form_invalid_common";
+    // Raid joint and raid-team summon, ids from enum_error_messages.
+    RaidJointErrorDismissed = 1008,                                 // "raid_joint_error_dismissed";
+    TargetAlreadyRaidJointed = 1010,                                 // "target_already_raid_jointed";
+    RaidJointedCannotEnterInstance = 1014,                          // "raid_jointed_cannot_enter_instance";
+    RaidJointFailedStatusChanged = 1019,                             // "raid_joint_failed_status_changed";
+    AlreadyRaidJointed = 1084,                                      // "already_raid_jointed";
+    // The summon trio. The client renders 893/894 itself; 892 is the server's refusal when one of
+    // the seven states named by ui_texts "team_summon_notice" holds.
+    SummonFail = 892,                                               // "summon_fail";
+    SummonNotEnoughSpace = 893,                                     // "summon_not_enough_space";
+    SummonCancelNotMove = 894,                                      // "summon_cancel_not_move";
 }
