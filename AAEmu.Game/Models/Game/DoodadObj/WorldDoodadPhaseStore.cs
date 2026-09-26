@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using AAEmu.Commons.Utils.DB;
 using MySql.Data.MySqlClient;
 using NLog;

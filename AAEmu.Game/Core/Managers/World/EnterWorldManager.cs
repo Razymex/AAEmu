@@ -1,4 +1,4 @@
-using AAEmu.Commons.Cryptography;
+﻿using AAEmu.Commons.Cryptography;
 using AAEmu.Commons.Utils;
 using AAEmu.Game.Core.Managers;
 using AAEmu.Game.Core.Network.Connections;
