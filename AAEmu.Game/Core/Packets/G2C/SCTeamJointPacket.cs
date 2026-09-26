@@ -11,10 +11,17 @@ public sealed class SCTeamJointPacket(
     int jointOrder) : GamePacket(SCOffsets.SCTeamJointPacket, 1)
 {
     /// <summary>
-    /// The value of <c>packetMode</c> is not established: the client switches on it, but the mode
-    /// table for this packet was never recovered, and it is NOT the same numbering as
+    /// The <em>position and width</em> of <c>packetMode</c> are established: the client's
+    /// serializer carries it as a confirmed one-byte value at the fifth of five body fields
+    /// (object offset 36, fixed 21-byte body). The derived <c>_packet_structs_*.json</c> summaries
+    /// report an object offset of 0 for it because they flatten guarded reads; the raw serializer
+    /// description is the authoritative shape and is what this packet matches.
+    ///
+    /// The <em>value</em> is not established. The client switches on this byte, but no mode table
+    /// for it was recovered, and it is NOT the same numbering as
     /// <c>SCTeamJointInfoPacket.mode</c> (see <see cref="Models.Game.Team.TeamJointModes"/>). Zero is
-    /// written as the neutral value; it is the only byte in this slice that is not evidence-backed.
+    /// written as the neutral value; it is the only byte in this slice that is not evidence-backed,
+    /// and it stays pinned rather than guessed.
     /// </summary>
     public const byte PacketModeUnresolved = 0;
 

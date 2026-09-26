@@ -13,6 +13,14 @@ internal sealed class FakeTeamJointContext : ITeamJointContext
     public List<(uint CharacterId, GamePacket Packet)> Sent { get; } = [];
     public List<(uint CharacterId, ErrorMessageType Error)> Errors { get; } = [];
     public List<(uint TeamId, uint RecipientId)> HeadersSent { get; } = [];
+    public List<uint> LootRulesReset { get; } = [];
+    public List<(uint CharacterId, uint TaskId, string Argv0, string Argv1)> Dialogs { get; } = [];
+    public List<(uint CharacterId, TeamSummonDestination Destination)> Teleports { get; } = [];
+    public List<(uint CharacterId, uint ItemTemplateId)> Consumed { get; } = [];
+    public HashSet<uint> OnCooldown { get; } = [];
+    public HashSet<uint> NoLandingSpace { get; } = [];
+    public bool TeleportSucceeds { get; set; } = true;
+    public bool HasFlame { get; set; } = true;
     public sbyte LocalWorldId { get; set; }
 
     public FakeTeamJointContext AddTeam(uint teamId, uint ownerId, bool isParty = false, params uint[] members)
@@ -45,7 +53,31 @@ internal sealed class FakeTeamJointContext : ITeamJointContext
 
     public FakeTeamJointContext SetInBattle(uint id, bool inBattle)
     {
-        _characters[id] = _characters[id] with { IsInBattle = inBattle };
+        // The live context reports combat as a shipped caution state, so the fake must too.
+        var character = _characters[id];
+        var states = inBattle
+            ? character.BlockedStates | TeamSummonRefusal.InCombat
+            : character.BlockedStates & ~TeamSummonRefusal.InCombat;
+        _characters[id] = character with { IsInBattle = inBattle, BlockedStates = states };
+        return this;
+    }
+
+    public FakeTeamJointContext SetBlockedStates(uint id, TeamSummonRefusal states)
+    {
+        _characters[id] = _characters[id] with { BlockedStates = states };
+        return this;
+    }
+
+    public FakeTeamJointContext SetPosition(uint id, float x, float y, float z, uint? zoneId = null)
+    {
+        var character = _characters[id];
+        _characters[id] = character with
+        {
+            X = x,
+            Y = y,
+            Z = z,
+            ZoneId = zoneId ?? character.ZoneId,
+        };
         return this;
     }
 
@@ -93,4 +125,39 @@ internal sealed class FakeTeamJointContext : ITeamJointContext
 
     public void ClearJoint(uint teamId) =>
         _teams[teamId] = _teams[teamId] with { JointId = 0, IsJointLeader = false, JointOrder = 0 };
+
+    public bool TryTeleport(uint characterId, TeamSummonDestination destination)
+    {
+        if (!TeleportSucceeds)
+            return false;
+        Teleports.Add((characterId, destination));
+        var character = _characters[characterId];
+        _characters[characterId] = character with
+        {
+            ZoneId = destination.ZoneId,
+            X = destination.X,
+            Y = destination.Y,
+            Z = destination.Z,
+        };
+        return true;
+    }
+
+    public bool HasSummonFlame(uint characterId, uint itemTemplateId) => HasFlame;
+
+    public bool TryConsumeSummonFlame(uint characterId, uint itemTemplateId)
+    {
+        if (!HasFlame)
+            return false;
+        Consumed.Add((characterId, itemTemplateId));
+        return true;
+    }
+
+    public bool IsOnSummonCooldown(uint characterId, uint skillId) => OnCooldown.Contains(characterId);
+
+    public bool HasSummonLandingSpace(uint characterId) => !NoLandingSpace.Contains(characterId);
+
+    public void ResetLootRules(uint teamId) => LootRulesReset.Add(teamId);
+
+    public void SendDialogTask(uint characterId, uint taskId, string argv0, string argv1) =>
+        Dialogs.Add((characterId, taskId, argv0, argv1));
 }
