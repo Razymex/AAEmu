@@ -6,6 +6,7 @@ using Xunit;
 namespace AAEmu.IntegrationTests;
 
 /// <summary>Opt-in check against the runtime compact catalog used by a real World process.</summary>
+[Collection(IndunRewardContentCollection.Name)]
 public sealed class IndunRewardContentIntegrationTests
 {
     private const string EnvironmentVariable = "AAEMU_INDUN_REWARD_TEST_CONTENT";
