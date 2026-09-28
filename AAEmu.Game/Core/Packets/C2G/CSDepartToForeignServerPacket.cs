@@ -10,11 +10,8 @@ namespace AAEmu.Game.Core.Packets.C2G;
 /// Client asks to leave this server for another one.
 /// </summary>
 /// <remarks>
-/// Wire: 10.0.2.13 <c>CSDepartToForeignServerPacket</c>, opcode 0x1C7, zero fields
-/// (protocol-10.0.2.13/catalog_CS.md row 394; the shipped client's packet structs list the class
-/// with <c>fields: []</c>), so the frame
-/// must carry no body — anything else fails loudly. The destination is therefore not on the
-/// wire either: it is resolved from content (see <see cref="ICrossServerDirectory"/>).
+/// The departure request has no body; extra bytes are rejected instead of being ignored.
+/// The destination is resolved from configured server metadata (see <see cref="ICrossServerDirectory"/>).
 /// </remarks>
 public class CSDepartToForeignServerPacket() : GamePacket(CSOffsets.CSDepartToForeignServerPacket, 1)
 {
@@ -54,8 +51,7 @@ public class CSDepartToForeignServerPacket() : GamePacket(CSOffsets.CSDepartToFo
         if (result.Outcome != CrossServerTransferOutcome.Granted)
         {
             character.TransferRequestTime = previousTransferRequest;
-            // Refusals are logged, not answered: the 10.0.2.13 corpus pins no refusal frame for
-            // 0x1C7, and inventing one would put bytes on the wire the client never parses.
+            // Refusals are logged rather than answered; this handler does not emit a refusal packet.
             Logger.Error(
                 "Cross-server departure refused for {0} (ObjId {1}): {2}.",
                 character.Name, character.ObjId, result.Outcome);

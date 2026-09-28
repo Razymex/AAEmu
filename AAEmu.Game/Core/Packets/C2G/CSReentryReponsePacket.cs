@@ -5,12 +5,11 @@ namespace AAEmu.Game.Core.Packets.C2G;
 
 /// <summary>Client's reply to the re-entry check: whether it cancels the pending re-entry.</summary>
 /// <remarks>
-/// Field order, widths and names come from the 10.0.2.13 client's serializer, which passes each
-/// value's name alongside the value:
+/// The response contains one byte: whether the client cancels the pending re-entry.
 /// </remarks>
 public class CSReentryReponsePacket() : GamePacket(CSOffsets.CSReentryReponsePacket, 1)
 {
-    private const int BodySize = sizeof(byte); // u8 cancel (catalog_CS.md 0x12D)
+    private const int BodySize = sizeof(byte); // one-byte cancel flag
 
     public bool Cancel { get; private set; }
 

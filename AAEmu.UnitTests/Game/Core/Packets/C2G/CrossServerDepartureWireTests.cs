@@ -5,16 +5,13 @@ using AAEmu.Game.Core.Packets.G2C;
 namespace AAEmu.UnitTests.Game.Core.Packets.C2G;
 
 /// <summary>
-/// Wire half of GF-S15. Field lists come from the 10.0.2.13 client's own packet structs and
-/// the protocol catalogs (protocol-10.0.2.13/catalog_CS.md and catalog_SC.md):
+/// Wire-shape checks for the cross-server departure packets.
 /// <list type="bullet">
-/// <item><c>CSDepartToForeignServerPacket</c> 0x1C7, CS, fields [] — the frame carries no body
-/// and no destination.</item>
-/// <item><c>SCDepartureServerGrantedPacket</c> 0x006, SC, fields [] — the grant writes nothing.</item>
-/// <item><c>CSReentryReponsePacket</c> 0x12D, CS, u8 cancel — exactly one byte.</item>
+/// <item><c>CSDepartToForeignServerPacket</c> carries no body and no destination.</item>
+/// <item><c>SCDepartureServerGrantedPacket</c> writes no body.</item>
+/// <item><c>CSReentryReponsePacket</c> carries one cancel byte.</item>
 /// </list>
-/// These tests pin that shape so a future edit cannot silently widen or truncate the stream the
-/// client parses.
+/// These tests pin the packet contract so a future edit cannot silently widen or truncate it.
 /// </summary>
 public class CrossServerDepartureWireTests
 {
